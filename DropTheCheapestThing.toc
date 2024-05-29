@@ -1,11 +1,8 @@
-## Interface: 100207
-## Interface-Cata: 40400
-## Interface-Wrath: 30403
-## Interface-Classic: 11502
+## Interface: 100206
 ## Title: DropTheCheapestThing
 ## Notes: Drop the cheapest thing you're carrying
 ## Author: Kemayo
-## Version: @project-version@
+## Version: v2024.2
 ## OptionalDeps: Ace3, LibDBIcon-1.0, tekDebug, Bagnon
 ## SavedVariables: DropTheCheapestThingDB
 ## LoadManagers: AddonLoader
