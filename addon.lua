@@ -352,7 +352,7 @@ function core:ALT_CLICK_ITEM(bag, slot)
 		-- Check if this unique identifier is already in the list
 		if not tContains(core.db.profile.sell_next_vendor[id], uniqueIdentifier) then
 			table.insert(core.db.profile.sell_next_vendor[id], uniqueIdentifier)
-			core:Print(link.." |cFF00FF00added to sell list.|r")
+			core:Print(link.." |cFFFFFF00added to sell list.|r")
 		else
 			-- If it's already in the list, remove it
 			for i, v in ipairs(core.db.profile.sell_next_vendor[id]) do
