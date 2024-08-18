@@ -98,6 +98,8 @@ function core:BAG_UPDATE()
 
     local total, total_sell, total_drop = 0, 0, 0
 
+    clearSellIcons()
+
     for bag = 0, NUM_BAG_SLOTS do
         local bagsSlotCount = GetContainerNumSlots(bag)
         for slot = 1, bagsSlotCount do
@@ -141,23 +143,26 @@ function core:BAG_UPDATE()
                 end
                 total = total + slot_values[bagslot]
 
-                -- Pass the itemButton directly for standard bags
-                if itemButton then
-                    markItemForSale(itemButton, itemid, link, characterName)
-                end
+                -- Introduce a delay before calling markItemForSale
+                AceTimer:ScheduleTimer(function()
+                    -- Pass the itemButton directly for standard bags
+                    if itemButton then
+                        markItemForSale(itemButton, itemid, link, characterName)
+                    end
 
-                -- Handle AdiBags separately
-                if AdiBagsItemButton1 then
-                    -- Assuming AdiBagsItemButton1 exists if AdiBags is loaded
-                    for i = 1, 360 do
-                        local frameName = "AdiBagsItemButton" .. i
-                        local adiBagsButton = _G[frameName]
-                        if adiBagsButton and adiBagsButton:IsShown() and adiBagsButton.bag == bag and adiBagsButton.slot == slot then
-                            markItemForSale(adiBagsButton, itemid, link, characterName)
-                            break
+                    -- Handle AdiBags separately
+                    if AdiBagsItemButton1 then
+                        -- Assuming AdiBagsItemButton1 exists if AdiBags is loaded
+                        for i = 1, 360 do
+                            local frameName = "AdiBagsItemButton" .. i
+                            local adiBagsButton = _G[frameName]
+                            if adiBagsButton and adiBagsButton:IsShown() and adiBagsButton.bag == bag and adiBagsButton.slot == slot then
+                                markItemForSale(adiBagsButton, itemid, link, characterName)
+                                break
+                            end
                         end
                     end
-                end
+                end, 0.2) -- Delay of 0.1 seconds
             end
         end
     end
@@ -311,15 +316,15 @@ function drop_bagslot(bagslot, sell_only)
                 core.db.profile.sell_next_vendor[id] = nil
             end
         end
-        clearSellIcons()
-        core:BAG_UPDATE()
+        --clearSellIcons()
+        --core:BAG_UPDATE()
 
     else
         DEFAULT_CHAT_FRAME:AddMessage("Dropping " .. pretty_bagslot_name(bagslot) .. " worth " .. copper_to_pretty_money(slot_values[bagslot]))
         PickupContainerItem(bag, slot)
         DeleteCursorItem()
-        clearSellIcons()
-        core:BAG_UPDATE()
+--        clearSellIcons()
+--        core:BAG_UPDATE()
 
     end
 end
