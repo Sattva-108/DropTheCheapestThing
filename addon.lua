@@ -401,7 +401,7 @@ function markItemForSale(itemButton, itemid, link, characterName)
 
 			local texture = frame:CreateTexture(nil, "OVERLAY")
 			texture:SetPoint("TOPRIGHT", frame, "TOPRIGHT") -- Adjust anchoring as needed
-			texture:SetSize(16, 16) -- Adjust size as needed
+			texture:SetSize(24, 24) -- Adjust size as needed
 			frame.texture = texture
 			frame:Hide()
 		end
@@ -409,11 +409,15 @@ function markItemForSale(itemButton, itemid, link, characterName)
 		local name = GetItemInfo(link)
 		if link then
 			local uniqueIdentifier = characterName .. ":" .. (name or "")
+			-- Check if the item is on the sell list OR in the always_consider list
 			if core.db.profile.sell_next_vendor[itemid] and tContains(core.db.profile.sell_next_vendor[itemid], uniqueIdentifier) then
 				frame:Show()
 				frame.texture:SetTexture("interface\\buttons\\ui-grouploot-coin-up.blp")
+			elseif core.db.profile.always_consider[itemid] and not core.db.profile.never_consider[itemid] then
+				frame:Show()
+				frame.texture:SetTexture("interface\\buttons\\ui-grouploot-coin-up.blp") -- You can use a different texture here
 			else
-				frame:Hide() -- Hide the icon if the item is not on the sell list
+				frame:Hide()
 			end
 		end
 	end
