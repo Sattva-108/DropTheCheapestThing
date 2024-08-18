@@ -10,7 +10,7 @@ end
 
 local db, iterate_bags, slot_sorter, copper_to_pretty_money, encode_bagslot,
 decode_bagslot, pretty_bagslot_name, drop_bagslot, add_junk_to_tooltip,
-link_to_id, item_value, GetConsideredItemInfo, markItemForSale
+link_to_id, item_value, GetConsideredItemInfo, markItemForSale, clearSellIcons
 
 local drop_slots = {}
 local sell_slots = {}
@@ -311,10 +311,16 @@ function drop_bagslot(bagslot, sell_only)
                 core.db.profile.sell_next_vendor[id] = nil
             end
         end
+        clearSellIcons()
+        core:BAG_UPDATE()
+
     else
         DEFAULT_CHAT_FRAME:AddMessage("Dropping " .. pretty_bagslot_name(bagslot) .. " worth " .. copper_to_pretty_money(slot_values[bagslot]))
         PickupContainerItem(bag, slot)
         DeleteCursorItem()
+        clearSellIcons()
+        core:BAG_UPDATE()
+
     end
 end
 core.drop_bagslot = drop_bagslot
@@ -458,5 +464,29 @@ function markItemForSale(itemButton, itemid, link, characterName)
     end
 end
 core.markItemForSale = markItemForSale
+
+
+function clearSellIcons()
+    for bag = 0, NUM_BAG_SLOTS do
+        local bagsSlotCount = GetContainerNumSlots(bag)
+        for slot = 1, bagsSlotCount do
+            local itemButton = _G["ContainerFrame" .. bag + 1 .. "Item" .. bagsSlotCount - slot + 1]
+            if itemButton and itemButton.textureFrame then
+                itemButton.textureFrame:Hide()
+            end
+            if AdiBagsItemButton1 then
+                for i = 1, 360 do
+                    local frameName = "AdiBagsItemButton" .. i
+                    local adiBagsButton = _G[frameName]
+                    if adiBagsButton and adiBagsButton.textureFrame then
+                        adiBagsButton.textureFrame:Hide()
+                    end
+                end
+            end
+        end
+    end
+end
+core.clearSellIcons = clearSellIcons
+
 
 
