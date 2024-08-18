@@ -103,6 +103,7 @@ function core:BAG_UPDATE()
 			if itemButton and itemButton.textureFrame then
 				itemButton.textureFrame:Hide()
 			end
+
 			if itemid then
 				local bagslot = encode_bagslot(bag, slot)
 				slot_contents[bagslot] = link
@@ -135,12 +136,12 @@ function core:BAG_UPDATE()
 				end
 				total = total + slot_values[bagslot]
 
-				-- New section: Directly mark items for sell_next_vendor here
-				markItemForSale(itemButton, itemid, link, characterName)
+				-- Call markItemForSale with bag and slot parameters
+				markItemForSale(bag, slot, itemid, link, characterName)
 			end
 		end
 	end
-	
+
 	table.sort(drop_slots, slot_sorter)
 	table.sort(sell_slots, slot_sorter)
 	self.events:Fire("Junk_Update", #drop_slots, #sell_slots, total_drop, total_sell, total)
@@ -375,26 +376,53 @@ hooksecurefunc("ContainerFrameItemButton_OnModifiedClick",function(self,button)
 end);
 
 -- Function for marking directly in the loop
-function markItemForSale(itemButton, itemid, link, characterName)
-	local frame = itemButton.textureFrame
-	if not frame then
-		frame = CreateFrame("Frame", nil, itemButton)
-		frame:SetAllPoints(itemButton)
-		itemButton.textureFrame = frame
+function markItemForSale(bag, slot, itemid, link, characterName)
+	local itemButton = nil
 
-		local texture = frame:CreateTexture(nil, "OVERLAY")
-		texture:SetPoint("TOPRIGHT", frame, "TOPRIGHT")
-		texture:SetSize(30, 30)
-		frame.texture = texture
-		frame:Hide()
+	-- Check if AdiBags is loaded
+	if AdiBagsItemButton1 then
+		-- Iterate through potential AdiBags item button names
+		for i = 1, 360 do
+			local frameName = "AdiBagsItemButton" .. i
+			itemButton = _G[frameName]
+
+			-- Check if the button exists, is shown, and has the correct bag and slot IDs
+			if itemButton and itemButton:IsShown() and itemButton.bag == bag and itemButton.slot == slot then
+				print("AdiBags Button Found:", frameName, bag, slot) -- Debug print
+				break
+			end
+		end
 	end
 
-	local name = GetItemInfo(link)
-	if link then
-		local uniqueIdentifier = characterName .. ":" .. (name or "")
-		if core.db.profile.sell_next_vendor[itemid] and tContains(core.db.profile.sell_next_vendor[itemid], uniqueIdentifier) then
-			frame:Show()
-			frame.texture:SetTexture("interface\\buttons\\ui-grouploot-coin-up.blp")
+	-- If AdiBags is not loaded or the item is not in an AdiBags bag, use standard bag frames
+	if not itemButton then
+		itemButton = _G["ContainerFrame" .. bag + 1 .. "Item" .. slot]
+	end
+
+	-- If an item button is found, proceed with creating/showing the texture frame
+	if itemButton then
+		local frame = itemButton.textureFrame
+		if not frame then
+			frame = CreateFrame("Frame", nil, itemButton)
+			frame:SetAllPoints(itemButton)
+			itemButton.textureFrame = frame
+
+			local texture = frame:CreateTexture(nil, "OVERLAY")
+			texture:SetPoint("TOPRIGHT", frame, "TOPRIGHT") -- Adjust anchoring as needed
+			texture:SetSize(16, 16) -- Adjust size as needed
+			frame.texture = texture
+			frame:Hide()
+		end
+
+		local name = GetItemInfo(link)
+		if link then
+			local uniqueIdentifier = characterName .. ":" .. (name or "")
+			if core.db.profile.sell_next_vendor[itemid] and tContains(core.db.profile.sell_next_vendor[itemid], uniqueIdentifier) then
+				frame:Show()
+				frame.texture:SetTexture("interface\\buttons\\ui-grouploot-coin-up.blp")
+			else
+				frame:Hide() -- Hide the icon if the item is not on the sell list
+			end
 		end
 	end
 end
