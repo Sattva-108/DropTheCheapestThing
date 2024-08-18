@@ -136,8 +136,22 @@ function core:BAG_UPDATE()
 				end
 				total = total + slot_values[bagslot]
 
-				-- Call markItemForSale with bag and slot parameters
-				markItemForSale(bag, slot, itemid, link, characterName)
+				-- Pass the itemButton directly for standard bags
+				if itemButton then
+					markItemForSale(itemButton, itemid, link, characterName)
+				end
+
+				-- Handle AdiBags separately
+				if AdiBagsItemButton1 then  -- Assuming AdiBagsItemButton1 exists if AdiBags is loaded
+					for i = 1, 360 do
+						local frameName = "AdiBagsItemButton" .. i
+						local adiBagsButton = _G[frameName]
+						if adiBagsButton and adiBagsButton:IsShown() and adiBagsButton.bag == bag and adiBagsButton.slot == slot then
+							markItemForSale(adiBagsButton, itemid, link, characterName)
+							break
+						end
+					end
+				end
 			end
 		end
 	end
@@ -376,29 +390,7 @@ hooksecurefunc("ContainerFrameItemButton_OnModifiedClick",function(self,button)
 end);
 
 -- Function for marking directly in the loop
-function markItemForSale(bag, slot, itemid, link, characterName)
-	local itemButton = nil
-
-	-- Check if AdiBags is loaded
-	if AdiBagsItemButton1 then
-		-- Iterate through potential AdiBags item button names
-		for i = 1, 360 do
-			local frameName = "AdiBagsItemButton" .. i
-			itemButton = _G[frameName]
-
-			-- Check if the button exists, is shown, and has the correct bag and slot IDs
-			if itemButton and itemButton:IsShown() and itemButton.bag == bag and itemButton.slot == slot then
-				print("AdiBags Button Found:", frameName, bag, slot) -- Debug print
-				break
-			end
-		end
-	end
-
-	-- If AdiBags is not loaded or the item is not in an AdiBags bag, use standard bag frames
-	if not itemButton then
-		itemButton = _G["ContainerFrame" .. bag + 1 .. "Item" .. slot]
-	end
-
+function markItemForSale(itemButton, itemid, link, characterName)
 	-- If an item button is found, proceed with creating/showing the texture frame
 	if itemButton then
 		local frame = itemButton.textureFrame
