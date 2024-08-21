@@ -475,33 +475,22 @@ function clearSellIcons()
     for bag = 0, NUM_BAG_SLOTS do
         local bagsSlotCount = GetContainerNumSlots(bag)
         for slot = 1, bagsSlotCount do
-            local bagslot = encode_bagslot(bag, slot)
             local itemButton = _G["ContainerFrame" .. bag + 1 .. "Item" .. bagsSlotCount - slot + 1]
-            local isMarkedForSale = tContains(sell_slots, bagslot) or tContains(drop_slots, bagslot)
-
-            -- Only hide the icon if the slot is no longer marked for sale
-            if itemButton and itemButton.textureFrame and not isMarkedForSale then
+            if itemButton and itemButton.textureFrame then
                 itemButton.textureFrame:Hide()
             end
-
             if AdiBagsItemButton1 then
                 for i = 1, 360 do
                     local frameName = "AdiBagsItemButton" .. i
                     local adiBagsButton = _G[frameName]
                     if adiBagsButton and adiBagsButton.textureFrame then
-                        local adiBagSlot = encode_bagslot(adiBagsButton.bag, adiBagsButton.slot)
-                        local isAdiMarkedForSale = tContains(sell_slots, adiBagSlot) or tContains(drop_slots, adiBagSlot)
-
-                        if not isAdiMarkedForSale then
-                            adiBagsButton.textureFrame:Hide()
-                        end
+                        adiBagsButton.textureFrame:Hide()
                     end
                 end
             end
         end
     end
 end
-
 core.clearSellIcons = clearSellIcons
 
 
