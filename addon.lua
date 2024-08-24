@@ -1,5 +1,9 @@
 local core = LibStub("AceAddon-3.0"):NewAddon("DropTheCheapestThing", "AceEvent-3.0", "AceBucket-3.0")
 local AceTimer = LibStub("AceTimer-3.0")
+local AdiBags
+if IsAddOnLoaded("AdiBags") then
+    AdiBags = LibStub('AceAddon-3.0'):GetAddon('AdiBags')
+end
 
 local debugf = tekDebug and tekDebug:GetFrame("DropTheCheapestThing")
 local function Debug(...)
@@ -30,6 +34,7 @@ core.slot_values = slot_values
 core.slot_weightedvalues = slot_weightedvalues
 core.slot_valuesources = slot_valuesources
 core.events = LibStub("CallbackHandler-1.0"):New(core)
+core.has_loaded = false
 
 function core:OnInitialize()
     db = LibStub("AceDB-3.0"):New("DropTheCheapestThingDB", {
@@ -55,6 +60,28 @@ function core:OnInitialize()
 
     if MerchantFrame:IsVisible() then
         self:MERCHANT_SHOW()
+    end
+end
+
+if IsAddOnLoaded("AdiBags") then
+    if not core.has_loaded then
+        AceTimer:ScheduleTimer(function()
+            ToggleBackpack()
+        end, 0.1)
+        AceTimer:ScheduleTimer(function()
+            ToggleBackpack()
+        end, 0.3)
+        AceTimer:ScheduleTimer(function()
+            if AdiBagsContainer1 then
+                AdiBagsContainer1:HookScript("OnHide", function()
+                    core:BAG_UPDATE() -- this is a hack to make sure the bag is updated
+                end)
+                AdiBagsContainer1:HookScript("OnShow", function()
+                    core:BAG_UPDATE()
+                end)
+            end
+        end, 2)
+        core.has_loaded = true
     end
 end
 
@@ -323,8 +350,8 @@ function drop_bagslot(bagslot, sell_only)
         DEFAULT_CHAT_FRAME:AddMessage("Dropping " .. pretty_bagslot_name(bagslot) .. " worth " .. copper_to_pretty_money(slot_values[bagslot]))
         PickupContainerItem(bag, slot)
         DeleteCursorItem()
---        clearSellIcons()
---        core:BAG_UPDATE()
+        --        clearSellIcons()
+        --        core:BAG_UPDATE()
 
     end
 end
@@ -437,9 +464,20 @@ end);
 
 -- Function for marking directly in the loop
 function markItemForSale(itemButton, itemid, link, characterName)
-    -- If an item button is found, proceed with creating/showing the texture frame
-    if itemButton then
-        local frame = itemButton.textureFrame
+    -- Check if AdiBags is loaded
+    local isAdiBagsLoaded = AdiBagsItemButton1 ~= nil
+
+    -- Trigger AdiBags update if necessary
+    if isAdiBagsLoaded then
+        -- Assuming AdiBags uses a similar message to update its buttons
+        AdiBags:SendMessage("AdiBags_UpdateAllButtons")
+    end
+
+    local frame -- Declare frame outside the conditional block
+
+    -- Only create a new texture frame if AdiBags is NOT loaded
+    if not isAdiBagsLoaded then
+        frame = itemButton.textureFrame
         if not frame then
             frame = CreateFrame("Frame", nil, itemButton)
             frame:SetAllPoints(itemButton)
@@ -451,25 +489,41 @@ function markItemForSale(itemButton, itemid, link, characterName)
             frame.texture = texture
             frame:Hide()
         end
+    end
 
-        local name = GetItemInfo(link)
-        if link then
-            local uniqueIdentifier = characterName .. ":" .. (name or "")
-            -- Check if the item is on the sell list OR in the always_consider list
-            if core.db.profile.sell_next_vendor[itemid] and tContains(core.db.profile.sell_next_vendor[itemid], uniqueIdentifier) then
-                frame:Show()
+    local name = GetItemInfo(link)
+    if link then
+        local uniqueIdentifier = characterName .. ":" .. (name or "")
+        -- Check if the item is on the sell list OR in the always_consider list
+        if core.db.profile.sell_next_vendor[itemid] and tContains(core.db.profile.sell_next_vendor[itemid], uniqueIdentifier) then
+            if not isAdiBagsLoaded then
+                frame:Show() -- Now frame is in scope
                 frame.texture:SetTexture("interface\\buttons\\ui-grouploot-coin-up.blp")
-            elseif core.db.profile.always_consider[itemid] and not core.db.profile.never_consider[itemid] then
-                frame:Show()
-                frame.texture:SetTexture("interface\\buttons\\ui-grouploot-coin-up.blp") -- You can use a different texture here
-            else
-                frame:Hide()
             end
+
+            -- Mark the AdiBags frame directly
+            itemButton.beingSold = true
+
+        elseif core.db.profile.always_consider[itemid] and not core.db.profile.never_consider[itemid] then
+            if not isAdiBagsLoaded then
+                frame:Show() -- Now frame is in scope
+                frame.texture:SetTexture("interface\\buttons\\ui-grouploot-coin-up.blp") -- You can use a different texture here
+            end
+
+            -- Mark the AdiBags frame directly
+            itemButton.beingSold = true
+
+        else
+            if not isAdiBagsLoaded then
+                frame:Hide() -- Now frame is in scope
+            end
+
+            -- Unmark the AdiBags frame directly
+            itemButton.beingSold = false
         end
     end
 end
 core.markItemForSale = markItemForSale
-
 
 function clearSellIcons()
     for bag = 0, NUM_BAG_SLOTS do
