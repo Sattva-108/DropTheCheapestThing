@@ -173,7 +173,7 @@ function core:BAG_UPDATE()
                 -- Introduce a delay before calling markItemForSale
                 AceTimer:ScheduleTimer(function()
                     -- Pass the itemButton directly for standard bags
-                    if itemButton then
+                    if itemButton and not AdiBagsItemButton1 then
                         markItemForSale(itemButton, itemid, link, characterName)
                     end
 
