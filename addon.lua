@@ -501,8 +501,8 @@ function markItemForSale(itemButton, itemid, link, characterName)
                 frame.texture:SetTexture("interface\\buttons\\ui-grouploot-coin-up.blp")
             end
 
-            -- Mark the AdiBags frame directly
-            itemButton.beingSold = true
+                -- Mark the AdiBags frame directly
+                itemButton.beingSold = true
 
         elseif core.db.profile.always_consider[itemid] and not core.db.profile.never_consider[itemid] then
             if not isAdiBagsLoaded then
@@ -510,16 +510,16 @@ function markItemForSale(itemButton, itemid, link, characterName)
                 frame.texture:SetTexture("interface\\buttons\\ui-grouploot-coin-up.blp") -- You can use a different texture here
             end
 
-            -- Mark the AdiBags frame directly
-            itemButton.beingSold = true
+                -- Mark the AdiBags frame directly
+                itemButton.beingSold = true
 
         else
             if not isAdiBagsLoaded then
                 frame:Hide() -- Now frame is in scope
             end
 
-            -- Unmark the AdiBags frame directly
-            itemButton.beingSold = false
+                -- Unmark the AdiBags frame directly
+                itemButton.beingSold = false
         end
     end
 end

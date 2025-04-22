@@ -5,6 +5,8 @@ local AceTimer = LibStub("AceTimer-3.0")
 local db
 
 local isCachePerformed = false
+-- Add this near the top of the file with other module variables
+module.searchTerm = nil
 
 function module:removable_item(itemID, list_name)
 	local list_setting
@@ -19,11 +21,35 @@ function module:removable_item(itemID, list_name)
 
 	local item_name, _, item_rarity, _, _, _, _, _, _, item_icon = GetItemInfo(itemID)
 
+	-- Handle case where item info isn't available yet
+	if not item_name then
+		return {
+			type = "execute",
+			name = "item:"..tostring(itemID),
+			desc = "Item info not available - click to remove from "..list_name,
+			width = "30%",
+			arg = itemID,
+			func = function()
+				core.db.profile[list_setting][itemID] = nil
+				core:BAG_UPDATE()
+
+				-- Update the GUI
+				local args = module.options.args[list_setting] and module.options.args[list_setting].args.remove.args
+				if args then
+					args[tostring(itemID)] = nil
+				end
+
+				LibStub("AceConfigRegistry-3.0"):NotifyChange("DropTheCheapestThing")
+				module:Refresh()
+			end,
+		}
+	end
+
 	-- Get the color for the item's rarity
 	local rarityColor = select(4, GetItemQualityColor(item_rarity))
 
 	-- If item_name exists, wrap it in the color code. Otherwise, use a default representation.
-	local coloredItemName = item_name and rarityColor .. item_name .. "|r" or 'itemid:' .. tostring(itemID)
+	local coloredItemName = item_name and rarityColor..item_name.."|r" or 'itemid:'..tostring(itemID)
 
 	--print("Function called with list_name: " .. list_name)  -- New debug statement
 	--print("List setting: " .. list_setting)
@@ -33,7 +59,7 @@ function module:removable_item(itemID, list_name)
 	return {
 		type = "execute",
 		name = coloredItemName,
-		desc = not item_name and "Item isn't cached" or "Click to remove from the " .. list_name .. " consider list",
+		desc = "Click to remove from the "..list_name.." list",
 		image = item_icon,
 		width = "30%",
 		arg = itemID,
@@ -54,7 +80,6 @@ function module:removable_item(itemID, list_name)
 
 			-- Refresh the GUI
 			module:Refresh()
-
 		end,
 	}
 end
@@ -112,6 +137,33 @@ local function item_list_group(name, order, description, db_table)
 		order = order,
 		args = {},
 	}
+
+	-- Add search field only for "Always Consider" tab
+	if name == "Always Consider" then
+		group.args.search = {
+			type = "input",
+			name = "Search",
+			desc = "Search for items in this list",
+			get = function(info) return module.searchTerm or "" end,
+			set = function(info, v)
+				module.searchTerm = v ~= "" and v:lower() or nil
+				module:Refresh() -- This will force an immediate update
+			end,
+			order = 5,
+		}
+
+		group.args.clear_search = {
+			type = "execute",
+			name = "Clear Search",
+			desc = "Clear the current search",
+			func = function()
+				module.searchTerm = nil
+				module:Refresh() -- Force immediate update
+			end,
+			order = 6,
+		}
+	end
+
 	group.args.about = {
 		type = "description",
 		name = description,
@@ -200,16 +252,40 @@ local function item_list_group(name, order, description, db_table)
 
 	for itemID in pairs(db_table) do
 		cacheItemInfo(itemID)
-		--print("ItemID:", itemID)
 		local itemName, _, _, _, _, itemType = GetItemInfo(itemID)
+
 		if itemName and itemType then
-			--print("ItemName:", itemName, "ItemType:", itemType)
-			local category = module:CreateCategory(itemType, group.args.remove)
-			category.args[tostring(itemID)] = module:removable_item(itemID, name)
+			local showItem = true
+
+			if name == "Always Consider" and module.searchTerm then
+				local itemNameLower = itemName:lower()
+				local itemIDStr = tostring(itemID)
+				showItem = itemNameLower:find(module.searchTerm) or itemIDStr:find(module.searchTerm)
+			end
+
+			if showItem then
+				local category = module:CreateCategory(itemType, group.args.remove)
+				category.args[tostring(itemID)] = module:removable_item(itemID, name)
+			end
 		else
-			--print("Item info missing for:", itemID)
+			-- Uncached items
+			local category = module:CreateCategory("Uncached Items", group.args.remove)
+			category.args[tostring(itemID)] = {
+				type = "execute",
+				name = "item:"..tostring(itemID),
+				desc = "Item info not available - click to remove",
+				width = "30%",
+				arg = itemID,
+				func = function()
+					core.db.profile[list_setting][itemID] = nil
+					core:BAG_UPDATE()
+					LibStub("AceConfigRegistry-3.0"):NotifyChange("DropTheCheapestThing")
+					module:Refresh()
+				end,
+			}
 		end
 	end
+
 	return group
 end
 
