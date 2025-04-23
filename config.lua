@@ -511,14 +511,14 @@ function module:ShowConfig()
 							module.searchTerm = text ~= "" and text:lower() or nil
 
 							AceTimer:ScheduleTimer(function()
-								-- Find the AceGUI widget for the removeGroup
-								local dialog = LibStub("AceConfigDialog-3.0")
-								local frame = dialog.OpenFrames["DropTheCheapestThing"]
-								if not frame then return end
+								local dialog = LibStub("AceConfigDialog-3.0").OpenFrames["DropTheCheapestThing"]
+								if not dialog then return end
 
 								local removeGroupWidget
-								for _, child in ipairs(frame.children or {}) do
+								local selectedTab
+								for _, child in ipairs(dialog.children or {}) do
 									if child.type == "TreeGroup" or child.type == "TabGroup" then
+										selectedTab = child.status and child.status.selected
 										for _, subChild in ipairs(child.children or {}) do
 											if subChild.type == "ScrollFrame" then
 												for _, grandchild in ipairs(subChild.children or {}) do
@@ -537,23 +537,30 @@ function module:ShowConfig()
 									return
 								end
 
+								local label = "Always Consider"
+								local db_table = core.db.profile.always_consider
+								if selectedTab == "never" then
+									label = "Never Consider"
+									db_table = core.db.profile.never_consider
+								elseif selectedTab == "auto_delete" then
+									label = "Auto Delete Items"
+									db_table = core.db.profile.auto_delete
+								end
+
 								removeGroupWidget:ReleaseChildren()
 
-								-- Rebuild only matching items
-								for itemID in pairs(core.db.profile.always_consider) do
+								for itemID in pairs(db_table) do
 									local itemName, _, _, _, _, itemType = GetItemInfo(itemID)
 									if itemName and itemType then
 										local itemNameLower = itemName:lower()
 										local showItem = not module.searchTerm or itemNameLower:find(module.searchTerm) or tostring(itemID):find(module.searchTerm)
 
 										if showItem then
-											local entry = module:removable_item(itemID, "Always Consider")
+											local entry = module:removable_item(itemID, label)
 											local widget = LibStub("AceGUI-3.0"):Create("Icon")
 											widget:SetImage(entry.image or "Interface\\Icons\\INV_Misc_QuestionMark")
 											widget:SetLabel(entry.name)
-											widget:SetCallback("OnClick", function()
-												entry.func()
-											end)
+											widget:SetCallback("OnClick", function() entry.func() end)
 											removeGroupWidget:AddChild(widget)
 										end
 									end
@@ -561,6 +568,7 @@ function module:ShowConfig()
 
 								removeGroupWidget:DoLayout()
 							end, 0.2)
+
 						end)
 
 
