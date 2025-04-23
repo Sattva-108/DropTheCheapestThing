@@ -147,8 +147,8 @@ local function item_list_group(name, order, description, db_table)
 			get = function(info) return module.searchTerm or "" end,
 			set = function(info, v)
 				module.searchTerm = v ~= "" and v:lower() or nil
-				module:Refresh() -- This will force an immediate update
 			end,
+			dialogControl = "EditBox",
 			order = 5,
 		}
 
@@ -480,35 +480,123 @@ local function SetDialogPosition(dialog)
 end
 
 function module:ShowConfig()
-	--AceConfigDialog:SetDefaultSize("DropTheCheapestThing", 800, 200) -- Specify custom width and height of GUI here
-	AceConfigDialog:SelectGroup("DropTheCheapestThing", "always") -- Open Always Consider tab
-	AceConfigDialog:Open("DropTheCheapestThing")
+	print(">> ShowConfig called")
 
-	--local adiBagsContainer = _G["AdiBagsContainer1"]
-	--if IsAddOnLoaded("AdiBags") and adiBagsContainer and not adiBagsContainer:IsShown() then
-	--	adiBagsContainer:Show() -- show AdiBags bag
-	--end
+	AceConfigDialog:SelectGroup("DropTheCheapestThing", "always")
+	AceConfigDialog:Open("DropTheCheapestThing")
+	print(">> ConfigDialog opened")
 
 	local dialog = AceConfigDialog.OpenFrames["DropTheCheapestThing"]
+	if not dialog then
+		print(">> ERROR: No dialog frame found!")
+		return
+	end
 
-	if dialog then
-		-- Apply the custom position only once, after opening the frame
-		hooksecurefunc(dialog.frame, "Show", function()
-			-- Only apply SetDialogPosition to frames belonging to your addon
-			if dialog == AceConfigDialog.OpenFrames["DropTheCheapestThing"] then
-				if not module:IsConfigShown() then
-					--SetDialogPosition(dialog)
+	AceTimer:ScheduleTimer(function()
+		print(">> Timer fired. Scanning for widgets...")
 
+		local function scan_for_search_editbox(container)
+			if not container or not container.children then return false end
+
+			for _, widget in ipairs(container.children) do
+				print(">> Scanning widget:", widget.type)
+
+				if widget.type == "EditBox" and widget.label and widget.label:GetText() == "Search" then
+					print(">> Found Search EditBox!")
+
+					if not widget._dropcheapHooked then
+						widget._dropcheapHooked = true
+						widget.editbox:HookScript("OnTextChanged", function()
+							local text = widget.editbox:GetText()
+							module.searchTerm = text ~= "" and text:lower() or nil
+
+							AceTimer:ScheduleTimer(function()
+								-- Find the AceGUI widget for the removeGroup
+								local dialog = LibStub("AceConfigDialog-3.0")
+								local frame = dialog.OpenFrames["DropTheCheapestThing"]
+								if not frame then return end
+
+								local removeGroupWidget
+								for _, child in ipairs(frame.children or {}) do
+									if child.type == "TreeGroup" or child.type == "TabGroup" then
+										for _, subChild in ipairs(child.children or {}) do
+											if subChild.type == "ScrollFrame" then
+												for _, grandchild in ipairs(subChild.children or {}) do
+													if grandchild.type == "InlineGroup" and grandchild.titletext:GetText() == "Remove" then
+														removeGroupWidget = grandchild
+														break
+													end
+												end
+											end
+										end
+									end
+								end
+
+								if not removeGroupWidget then
+									print(">> ERROR: Could not locate Remove group widget")
+									return
+								end
+
+								removeGroupWidget:ReleaseChildren()
+
+								-- Rebuild only matching items
+								for itemID in pairs(core.db.profile.always_consider) do
+									local itemName, _, _, _, _, itemType = GetItemInfo(itemID)
+									if itemName and itemType then
+										local itemNameLower = itemName:lower()
+										local showItem = not module.searchTerm or itemNameLower:find(module.searchTerm) or tostring(itemID):find(module.searchTerm)
+
+										if showItem then
+											local entry = module:removable_item(itemID, "Always Consider")
+											local widget = LibStub("AceGUI-3.0"):Create("Icon")
+											widget:SetImage(entry.image or "Interface\\Icons\\INV_Misc_QuestionMark")
+											widget:SetLabel(entry.name)
+											widget:SetCallback("OnClick", function()
+												entry.func()
+											end)
+											removeGroupWidget:AddChild(widget)
+										end
+									end
+								end
+
+								removeGroupWidget:DoLayout()
+							end, 0.2)
+						end)
+
+
+
+
+						print(">> Hooked OnTextChanged successfully")
+					end
+
+					return true
+				end
+
+				-- Recursively scan children
+				if scan_for_search_editbox(widget) then
+					return true
 				end
 			end
-		end)
-	end
-	if isCachePerformed then
-		AceTimer:ScheduleTimer(function() module:Refresh() AceConfigDialog:Open("DropTheCheapestThing") end, 1)
-	end
-	-- FIXME: do we really need to call it all the time?
+
+			return false
+		end
+
+		local dialog = AceConfigDialog.OpenFrames["DropTheCheapestThing"]
+		if not dialog then
+			print(">> ERROR: No dialog frame found!")
+			return
+		end
+
+		local found = scan_for_search_editbox(dialog)
+		if not found then
+			print(">> ERROR: Could not find Search EditBox after deep scan")
+		end
+	end, 0.3)
+
+
 	module:Refresh()
 end
+
 
 function module:HideConfig()
 	local dialog = AceConfigDialog.OpenFrames["DropTheCheapestThing"]
@@ -625,3 +713,39 @@ SLASH_DROPTHECHEAPESTTHING2 = "/dtct"
 function SlashCmdList.DROPTHECHEAPESTTHING()
 	module:ShowConfig()
 end
+
+function module:RebuildAlwaysConsiderFilteredOnly()
+	local group = {
+		type = "group",
+		name = "Always Consider",
+		args = {
+			remove = {
+				type = "group",
+				inline = true,
+				name = "Remove",
+				order = 20,
+				args = {},
+			}
+		}
+	}
+
+	for itemID in pairs(core.db.profile.always_consider) do
+		local itemName, _, _, _, _, itemType = GetItemInfo(itemID)
+		if itemName and itemType then
+			local showItem = true
+			if module.searchTerm then
+				local itemNameLower = itemName:lower()
+				local itemIDStr = tostring(itemID)
+				showItem = itemNameLower:find(module.searchTerm) or itemIDStr:find(module.searchTerm)
+			end
+
+			if showItem then
+				local category = module:CreateCategory(itemType, group.args.remove)
+				category.args[tostring(itemID)] = module:removable_item(itemID, "Always Consider")
+			end
+		end
+	end
+
+	return group
+end
+
