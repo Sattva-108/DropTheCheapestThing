@@ -174,9 +174,6 @@ local function item_list_group(name, order, description, db_table)
 				ACD:SelectGroup("DropTheCheapestThing", "always")
 				ACD:Open("DropTheCheapestThing")
 
-				AceTimer:ScheduleTimer(function()
-					module:HookSearchEditBox()
-				end, 0.3)
 			end,
 			order = 6,
 		}
@@ -483,9 +480,9 @@ function module:OnInitialize()
 				local txt = widget.editbox:GetText():lower()
 				module.searchTerm = (txt ~= "") and txt or nil
 				-- believe it or not 0.00 delay does fix the issue with ctrl+backspace and ctrl+a+backspace clearing
-				LibStub("AceTimer-3.0"):ScheduleTimer(function()
+
 					module:RebuildFilteredRemoveGroup("always")
-				end, 0.00)
+
 			end)
 			return widget
 		end,
@@ -513,9 +510,6 @@ function module:ShowConfig()
 	local ACD = LibStub("AceConfigDialog-3.0")
 	ACD:SelectGroup("DropTheCheapestThing", "always")
 	ACD:Open("DropTheCheapestThing")
-	AceTimer:ScheduleTimer(function()
-		module:HookSearchEditBox()
-	end, 0.3)
 
 	module:Refresh()
 end
@@ -637,53 +631,29 @@ function SlashCmdList.DROPTHECHEAPESTTHING()
 	module:ShowConfig()
 end
 
-function module:RebuildFilteredRemoveGroup(selectedTab)
-	print("called")
-	if (not module.searchTerm or module.searchTerm == "") and (not module.searchBox or not module.searchBox.editbox:HasFocus()) then
+function module:RebuildFilteredRemoveGroup()
+	-- guard: if there’s no searchTerm *and* the search box isn’t focused, bail
+	if (not module.searchTerm or module.searchTerm == "")
+			and (not module.searchBox
+			or not module.searchBox.editbox:HasFocus())
+	then
 		return
 	end
 
 	local dialog = LibStub("AceConfigDialog-3.0").OpenFrames["DropTheCheapestThing"]
 	if not dialog then return end
 
-	-- Auto-detect tab
-	if not selectedTab then
-		for _, child in ipairs(dialog.children or {}) do
-			if child.type == "TreeGroup" or child.type == "TabGroup" then
-				selectedTab = child.status and child.status.selected
-			end
-		end
-	end
-
-	-- Only allow rebuilding for "always" tab
-	if selectedTab ~= "always" then
-		return
-	end
-
-
-	module.activeTab = selectedTab or "always"
-
-	local db_table, label
-	if selectedTab == "never" then
-		db_table = core.db.profile.never_consider
-		label = "Never Consider"
-	elseif selectedTab == "auto_delete" then
-		db_table = core.db.profile.auto_delete
-		label = "Auto Delete Items"
-	else
-		db_table = core.db.profile.always_consider
-		label = "Always Consider"
-	end
-
-	-- Find the Remove group widget
-	local removeGroupWidget
-	for _, child in ipairs(dialog.children or {}) do
-		if child.type == "TreeGroup" or child.type == "TabGroup" then
-			for _, subChild in ipairs(child.children or {}) do
-				if subChild.type == "ScrollFrame" then
-					for _, grandchild in ipairs(subChild.children or {}) do
-						if grandchild.type == "InlineGroup" and grandchild.titletext:GetText() == "Remove" then
-							removeGroupWidget = grandchild
+	-- find the “Remove” InlineGroup under Always Consider
+	local removeGroup
+	for _, frame in ipairs(dialog.children or {}) do
+		if frame.type=="TreeGroup" or frame.type=="TabGroup" then
+			for _, sf in ipairs(frame.children or {}) do
+				if sf.type=="ScrollFrame" then
+					for _, ig in ipairs(sf.children or {}) do
+						if ig.type=="InlineGroup"
+								and ig.titletext:GetText()=="Remove"
+						then
+							removeGroup = ig
 							break
 						end
 					end
@@ -691,88 +661,27 @@ function module:RebuildFilteredRemoveGroup(selectedTab)
 			end
 		end
 	end
+	if not removeGroup then return end
 
-	if not removeGroupWidget then
-		return
-	end
-
-	removeGroupWidget:ReleaseChildren()
-
-	for itemID in pairs(db_table) do
-		local itemName, _, _, _, _, itemType = GetItemInfo(itemID)
-		if itemName and itemType then
-			local showItem = true
-			if module.activeTab == "always" and module.searchTerm then
-				local itemNameLower = itemName:lower()
-				local itemIDStr = tostring(itemID)
-				showItem = itemNameLower:find(module.searchTerm) or itemIDStr:find(module.searchTerm)
-			end
-			if showItem then
-				local entry = module:removable_item(itemID, label)
+	-- clear & rebuild, always using the AlwaysConsider table
+	removeGroup:ReleaseChildren()
+	local term = module.searchTerm
+	for itemID in pairs(core.db.profile.always_consider) do
+		local name = select(1, GetItemInfo(itemID))
+		if name then
+			if not term
+					or name:lower():find(term)
+					or tostring(itemID):find(term)
+			then
+				local entry  = module:removable_item(itemID, "Always Consider")
 				local widget = LibStub("AceGUI-3.0"):Create("Icon")
 				widget:SetImage(entry.image or "Interface\\Icons\\INV_Misc_QuestionMark")
 				widget:SetLabel(entry.name)
 				widget:SetCallback("OnClick", function() entry.func() end)
-				removeGroupWidget:AddChild(widget)
+				removeGroup:AddChild(widget)
 			end
 		end
 	end
-	removeGroupWidget:DoLayout()
+	removeGroup:DoLayout()
 end
 
-function module:HookSearchEditBox()
-	local dialog = LibStub("AceConfigDialog-3.0").OpenFrames["DropTheCheapestThing"]
-	if not dialog then return end
-
-	local function scan(container)
-		if not container or not container.children then return false end
-
-		for _, widget in ipairs(container.children) do
-			print(widget)
-			if widget.type == "EditBox" and widget.label and widget.label:GetText() == "Search" then
-				module.searchBox = widget
-				if not widget._dropcheapHooked then
-					widget._dropcheapHooked = true
-
-					local function onUpdateSearchFilter()
-						local newTerm = widget.editbox:GetText()
-						newTerm = newTerm ~= "" and newTerm:lower() or nil
-
-						if module.lastSearchTerm == newTerm then return end
-
-						module.searchTerm = newTerm
-						module.lastSearchTerm = newTerm
-
-						AceTimer:ScheduleTimer(function()
-							module:RebuildFilteredRemoveGroup()
-						end, 0.2)
-					end
-
-					widget.editbox:HookScript("OnTextChanged", function()
-						local text = widget.editbox:GetText()
-						print("Search box changed to:", text)
-
-						local newTerm = text ~= "" and text:lower() or nil
-
-						module.searchTerm = newTerm
-						module.lastSearchTerm = newTerm
-
-						AceTimer:ScheduleTimer(function()
-							module:RebuildFilteredRemoveGroup("always")
-						end, 0.2)
-					end)
-
-				end
-
-				return true
-			end
-
-			if scan(widget) then return true end
-		end
-
-		return false
-	end
-
-	local found = scan(dialog)
-	if not found then	end
-end
