@@ -58,30 +58,30 @@ function module:removable_item(itemID, list_name)
 
 
 	return {
-		type = "execute",
-		name = coloredItemName,
-		desc = "Click to remove from the "..list_name.." list",
-		image = item_icon,
-		width = "30%",
-		arg = itemID,
-		func = function()
-			-- Ensure that the necessary keys exist in the profile table
-			core.db.profile[list_setting] = core.db.profile[list_setting] or {}
-			core.db.profile[list_setting][itemID] = nil
+	type = "execute",
+	name = coloredItemName,
+	desc = "Click to remove from the "..list_name.." list",
+	image = item_icon,
+	width = "30%",
+	arg = itemID,
+	func = function()
+	-- Ensure that the necessary keys exist in the profile table
+	core.db.profile[list_setting] = core.db.profile[list_setting] or {}
+	core.db.profile[list_setting][itemID] = nil
 
-			core:BAG_UPDATE()
+	core:BAG_UPDATE()
 
-			-- Check if the args table and the corresponding keys exist
-			local args = module.options.args[list_setting] and module.options.args[list_setting].args.remove.args
-			if args then
-				args[tostring(itemID)] = nil
-			end
+	-- Check if the args table and the corresponding keys exist
+	local args = module.options.args[list_setting] and module.options.args[list_setting].args.remove.args
+	if args then
+	args[tostring(itemID)] = nil
+	end
 
-			LibStub("AceConfigRegistry-3.0"):NotifyChange("DropTheCheapestThing")
+	LibStub("AceConfigRegistry-3.0"):NotifyChange("DropTheCheapestThing")
 
-			-- Refresh the GUI
-			module:Refresh()
-		end,
+	-- Refresh the GUI
+	module:Refresh()
+	end,
 	}
 end
 
@@ -491,13 +491,9 @@ end
 
 function module:ShowConfig()
 	module.activeTab = "always"
-	print(">> ShowConfig called")
-
 	local ACD = LibStub("AceConfigDialog-3.0")
 	ACD:SelectGroup("DropTheCheapestThing", "always")
 	ACD:Open("DropTheCheapestThing")
-	print(">> ConfigDialog opened")
-
 	AceTimer:ScheduleTimer(function()
 		module:HookSearchEditBox()
 	end, 0.3)
@@ -623,6 +619,10 @@ function SlashCmdList.DROPTHECHEAPESTTHING()
 end
 
 function module:RebuildFilteredRemoveGroup(selectedTab)
+	if not module.searchTerm or module.searchTerm == "" then
+		return
+	end
+
 	local dialog = LibStub("AceConfigDialog-3.0").OpenFrames["DropTheCheapestThing"]
 	if not dialog then return end
 
@@ -637,10 +637,8 @@ function module:RebuildFilteredRemoveGroup(selectedTab)
 
 	-- Only allow rebuilding for "always" tab
 	if selectedTab ~= "always" then
-		print("returning")
 		return
 	end
-	print("returning after")
 
 
 	module.activeTab = selectedTab or "always"
@@ -675,7 +673,6 @@ function module:RebuildFilteredRemoveGroup(selectedTab)
 	end
 
 	if not removeGroupWidget then
-		print(">> ERROR: Could not locate Remove group widget for", label)
 		return
 	end
 
@@ -700,9 +697,6 @@ function module:RebuildFilteredRemoveGroup(selectedTab)
 			end
 		end
 	end
-
-	print("called")
-
 	removeGroupWidget:DoLayout()
 end
 
@@ -732,10 +726,20 @@ function module:HookSearchEditBox()
 						end, 0.2)
 					end
 
-					widget.editbox:HookScript("OnTextChanged", onUpdateSearchFilter)
-					widget.editbox:HookScript("OnEnterPressed", onUpdateSearchFilter)
+					widget.editbox:HookScript("OnTextChanged", function()
+						local text = widget.editbox:GetText()
+						print("Search box changed to:", text)
 
-					print(">> Hooked EditBox for live + enter filtering")
+						local newTerm = text ~= "" and text:lower() or nil
+
+						module.searchTerm = newTerm
+						module.lastSearchTerm = newTerm
+
+						AceTimer:ScheduleTimer(function()
+							module:RebuildFilteredRemoveGroup("always")
+						end, 0.2)
+					end)
+
 				end
 
 				return true
@@ -748,7 +752,5 @@ function module:HookSearchEditBox()
 	end
 
 	local found = scan(dialog)
-	if not found then
-		print(">> ERROR: Search EditBox not found during HookSearchEditBox")
-	end
+	if not found then	end
 end
