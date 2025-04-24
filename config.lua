@@ -266,12 +266,22 @@ local function item_list_group(name, order, description, db_table)
 
 			local frame = AceConfigDialog.OpenFrames["DropTheCheapestThing"]
 			if frame then
+				-- cancel any old clear so it won’t wipe this “Added” text prematurely
+				if module._clearStatusTimer then
+					AceTimer:CancelTimer(module._clearStatusTimer, true)
+				end
+
 				frame:SetStatusText(("Added %s"):format(display))
-				-- clear it after 5s
-				AceTimer:ScheduleTimer(function()
+
+				-- schedule one fresh clear 5s from now and remember its handle
+				module._clearStatusTimer = AceTimer:ScheduleTimer(function()
 					if frame then frame:SetStatusText("") end
+					-- also hide the Undo button if it’s still up
+					if module.undoBtn then module.undoBtn:Hide() end
+					module._clearStatusTimer = nil
 				end, 5)
 			end
+
 
 			core:BAG_UPDATE()
 			AceTimer:ScheduleTimer(function() _G["AceGUI-3.0EditBox2"]:ClearFocus() end, 0.01)
