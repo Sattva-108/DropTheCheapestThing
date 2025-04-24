@@ -141,49 +141,12 @@ local function item_list_group(name, order, description, db_table)
 		args = {},
 	}
 
-	-- Add search field only for "Always Consider" tab
-	if name == "Always Consider" then
-		group.args.search = {
-			type = "input",
-			name = "Search",
-			desc = "Search for items in this list",
-			get = function(info) return module.searchTerm or "" end,
-			set = function(info, v)
-				module.searchTerm = v ~= "" and v:lower() or nil
-				module.lastSearchTerm = module.searchTerm
-
-				AceTimer:ScheduleTimer(function()
-					module:RebuildFilteredRemoveGroup()
-				end, 0.01)
-			end,
-			dialogControl = "DropCheapSearchBox",
-			order = 5,
-		}
-
-		group.args.clear_search = {
-			type = "execute",
-			name = "Clear Search",
-			desc = "Clear the current search",
-			func = function()
-				module.searchTerm = nil
-				module.lastSearchTerm = nil
-				module.activeTab = "always"
-
-				module:Refresh()
-				local ACD = LibStub("AceConfigDialog-3.0")
-				ACD:SelectGroup("DropTheCheapestThing", "always")
-				ACD:Open("DropTheCheapestThing")
-
-			end,
-			order = 6,
-		}
-	end
-
 	group.args.about = {
 		type = "description",
 		name = description,
 		order = 0,
 	}
+
 	group.args.add = {
 		type = "input",
 		name = "Add",
@@ -193,7 +156,6 @@ local function item_list_group(name, order, description, db_table)
 			local itemid = core.link_to_id(v) or tonumber(v)
 			db_table[itemid] = true
 
-			-- Get and create a proper category for a new item, then add it
 			local itemName, _, _, _, _, itemType = GetItemInfo(itemid)
 			if itemName and itemType then
 				local category = module:CreateCategory(itemType, group.args.remove)
@@ -201,26 +163,64 @@ local function item_list_group(name, order, description, db_table)
 			end
 
 			core:BAG_UPDATE()
-			-- Schedule a timer to call ClearFocus() after a delay
-			AceTimer:ScheduleTimer(function() _G["AceGUI-3.0EditBox1"]:ClearFocus() end, 0.01)
+			AceTimer:ScheduleTimer(function() _G["AceGUI-3.0EditBox2"]:ClearFocus() end, 0.01)
 		end,
 		validate = function(info, v)
-			if v:match("^%d+$") or v:match("item:%d+") then
-				return true
-			end
+			if v:match("^%d+$") or v:match("item:%d+") then return true end
 		end,
-		order = 10,
+		order = 5,
+		width = "quarter",
 	}
+
+	group.args.spacer_after_add = {
+		type = "description",
+		name = "",
+		order = 5.5,
+		width = "full",
+	}
+
+
+	if name == "Always Consider" then
+		group.args.search = {
+			type = "input",
+			name = "Search",
+			desc = "Filter items shown below.",
+			get = function(info) return module.searchTerm or "" end,
+			set = function(info, v)
+				module.searchTerm = v ~= "" and v:lower() or nil
+				module.lastSearchTerm = module.searchTerm
+				AceTimer:ScheduleTimer(function()
+					module:RebuildFilteredRemoveGroup()
+				end, 0.01)
+			end,
+			dialogControl = "DropCheapSearchBox",
+			order = 6,
+			width = "quarter",
+		}
+
+		group.args.clear_search = {
+			type = "execute",
+			name = "Clear",
+			desc = "Reset the search filter.",
+			func = function()
+				module.searchTerm = nil
+				module.lastSearchTerm = nil
+				module.activeTab = "always"
+				module:Refresh()
+				local ACD = LibStub("AceConfigDialog-3.0")
+				ACD:SelectGroup("DropTheCheapestThing", "always")
+				ACD:Open("DropTheCheapestThing")
+			end,
+			order = 7,
+			width = "half",
+		}
+	end
+
 	group.args.remove = {
 		type = "group",
 		inline = true,
 		name = "Remove",
-		order = 20,
-		func = function(info)
-			db_table[info.arg] = nil
-			group.args.remove.args[info[#info]] = nil
-			core:BAG_UPDATE()
-		end,
+		order = 10,
 		args = {
 			about = {
 				type = "description",
@@ -471,21 +471,22 @@ function module:OnInitialize()
 	self.options = options
 
 	AceGUI:RegisterWidgetType("DropCheapSearchBox",
-		function()
+			function()
 			-- create a normal EditBox…
-			local widget = AceGUI:Create("EditBox")
+				local widget = AceGUI:Create("EditBox")
 			widget:SetLabel("Search")
-			-- but *immediately* hook its OnTextChanged
-            widget.editbox:HookScript("OnTextChanged", function()
-                local txt = widget.editbox:GetText():lower()
-                module.searchTerm  = (txt ~= "") and txt or nil
-                module.searchBox   = widget
-                module:RebuildFilteredRemoveGroup("always")
-            end)
 
-			return widget
-		end,
-	1)
+			-- but *immediately* hook its OnTextChanged
+				widget.editbox:HookScript("OnTextChanged", function()
+					local txt = widget.editbox:GetText():lower()
+					module.searchTerm = (txt ~= "") and txt or nil
+					module.searchBox  = widget
+                	module:RebuildFilteredRemoveGroup("always")
+				end)
+
+				return widget
+			end,
+			1)
 
 
 	LibStub("AceConfigRegistry-3.0"):RegisterOptionsTable("DropTheCheapestThing", options)
