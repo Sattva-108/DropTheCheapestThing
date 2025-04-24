@@ -11,6 +11,70 @@ local isCachePerformed = false
 module.searchTerm = nil
 module.lastSearchTerm = nil
 
+-- stash the last‐removed for Undo
+module._lastRemoved = nil
+-- keep track of the pending “clear status” timer
+module._clearStatusTimer = nil
+
+
+-- lazily create & parent the Undo button to your config frame
+local function EnsureUndoButton()
+	local ACD = LibStub("AceConfigDialog-3.0")
+	local guiFrame = ACD.OpenFrames["DropTheCheapestThing"]
+	if not (guiFrame and guiFrame.frame) then return end
+
+	-- only build it once
+	if not module.undoBtn then
+		local parent = guiFrame.frame
+		local btn = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
+		btn:SetSize(60,20)
+		btn:SetPoint("BOTTOMLEFT", parent, "BOTTOMLEFT", 20, -40)
+		btn:SetText("Undo")
+		btn:Hide()
+		-- make sure it's on top of the other children
+		btn:SetFrameLevel(parent:GetFrameLevel()+20)
+
+		btn:SetScript("OnClick", function()
+			local info = module._lastRemoved
+			if not info then return end
+
+			-- re-add
+			core.db.profile[info.list] = core.db.profile[info.list] or {}
+			core.db.profile[info.list][info.itemID] = true
+			module:Refresh()
+			LibStub("AceConfigRegistry-3.0"):NotifyChange("DropTheCheapestThing")
+
+			local frame = LibStub("AceConfigDialog-3.0").OpenFrames["DropTheCheapestThing"]
+			if frame then
+				frame:SetStatusText(("Re-added %s"):format(info.display))
+
+				-- cancel the old clear‐timer silently
+				if module._clearStatusTimer then
+					AceTimer:CancelTimer(module._clearStatusTimer, true)
+				end
+
+				-- schedule a fresh clear 5 seconds after the undo
+				module._clearStatusTimer = AceTimer:ScheduleTimer(function()
+					if frame then frame:SetStatusText("") end
+				end, 5)
+			end
+
+			module._lastRemoved = nil
+			module.undoBtn:Hide()
+		end)
+
+
+
+		module.undoBtn = btn
+	else
+		-- if the frame was re-created, re-parent & re-anchor
+		module.undoBtn:SetParent(guiFrame.frame)
+		module.undoBtn:ClearAllPoints()
+		module.undoBtn:SetPoint("BOTTOMLEFT", guiFrame.frame, "BOTTOMLEFT", 24, 47)
+	end
+end
+
+
 function module:removable_item(itemID, list_name)
 	local list_setting
 	if list_name == "Never Consider" then
@@ -67,22 +131,58 @@ function module:removable_item(itemID, list_name)
 	width = "30%",
 	arg = itemID,
 	func = function()
-	-- Ensure that the necessary keys exist in the profile table
-	core.db.profile[list_setting] = core.db.profile[list_setting] or {}
-	core.db.profile[list_setting][itemID] = nil
+		-- 1) remove from the saved list
+		core.db.profile[list_setting] = core.db.profile[list_setting] or {}
+		core.db.profile[list_setting][itemID] = nil
 
-	core:BAG_UPDATE()
+		-- 2) update bags/UI
+		core:BAG_UPDATE()
 
-	-- Check if the args table and the corresponding keys exist
-	local args = module.options.args[list_setting] and module.options.args[list_setting].args.remove.args
-	if args then
-	args[tostring(itemID)] = nil
-	end
+		-- 3) strip it out of the options args table so it disappears immediately
+		local args = module.options.args[list_setting]
+				and module.options.args[list_setting].args.remove.args
+		if args then
+			args[tostring(itemID)] = nil
+		end
 
-	LibStub("AceConfigRegistry-3.0"):NotifyChange("DropTheCheapestThing")
+		-- 4) rebuild and notify AceConfig
+		LibStub("AceConfigRegistry-3.0"):NotifyChange("DropTheCheapestThing")
+		module:Refresh()
 
-	-- Refresh the GUI
-	module:Refresh()
+		-- 5) show a “Removed X” status message in the config frame
+		local _, itemLink = GetItemInfo(itemID)
+		-- fall back to your coloured name if the link isn’t cached yet:
+		local display = itemLink or coloredItemName
+
+		-- 5) **store** for undo
+		module._lastRemoved = {
+			itemID  = itemID,
+			list    = list_setting,
+			display = display,
+		}
+
+		-- 6) ensure our Undo button exists & show it
+		EnsureUndoButton()
+		if module.undoBtn then
+			module.undoBtn:Show()
+			module.undoBtn:Raise()
+		end
+
+		local frame = AceConfigDialog.OpenFrames["DropTheCheapestThing"]
+		if frame then
+			frame:SetStatusText(("Removed %s"):format(display))
+
+			if module._clearStatusTimer then
+				AceTimer:CancelTimer(module._clearStatusTimer, true)
+			end
+			module._clearStatusTimer = AceTimer:ScheduleTimer(function()
+				if frame then frame:SetStatusText("") end
+				if module.undoBtn then module.undoBtn:Hide() end
+			end, 5)
+		end
+
+
+
 	end,
 	}
 end
@@ -546,6 +646,7 @@ function module:ShowConfig()
 	local ACD = LibStub("AceConfigDialog-3.0")
 	ACD:SelectGroup("DropTheCheapestThing", "always")
 	ACD:Open("DropTheCheapestThing")
+	EnsureUndoButton()
 
 	module:Refresh()
 end
