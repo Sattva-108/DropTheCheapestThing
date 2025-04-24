@@ -476,14 +476,13 @@ function module:OnInitialize()
 			local widget = AceGUI:Create("EditBox")
 			widget:SetLabel("Search")
 			-- but *immediately* hook its OnTextChanged
-			widget.editbox:HookScript("OnTextChanged", function()
-				local txt = widget.editbox:GetText():lower()
-				module.searchTerm = (txt ~= "") and txt or nil
-				-- believe it or not 0.00 delay does fix the issue with ctrl+backspace and ctrl+a+backspace clearing
+            widget.editbox:HookScript("OnTextChanged", function()
+                local txt = widget.editbox:GetText():lower()
+                module.searchTerm  = (txt ~= "") and txt or nil
+                module.searchBox   = widget
+                module:RebuildFilteredRemoveGroup("always")
+            end)
 
-					module:RebuildFilteredRemoveGroup("always")
-
-			end)
 			return widget
 		end,
 	1)
