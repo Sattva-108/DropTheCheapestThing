@@ -2,6 +2,8 @@ local core = LibStub("AceAddon-3.0"):GetAddon("DropTheCheapestThing")
 local module = core:NewModule("Config")
 -- Import AceTimer
 local AceTimer = LibStub("AceTimer-3.0")
+local AceGUI = LibStub("AceGUI-3.0")
+local AceConfigDialog = LibStub("AceConfigDialog-3.0")
 local db
 
 local isCachePerformed = false
@@ -154,7 +156,7 @@ local function item_list_group(name, order, description, db_table)
 					module:RebuildFilteredRemoveGroup()
 				end, 0.01)
 			end,
-			dialogControl = "EditBox",
+			dialogControl = "DropCheapSearchBox",
 			order = 5,
 		}
 
@@ -471,11 +473,28 @@ function module:OnInitialize()
 	}
 	self.options = options
 
+	AceGUI:RegisterWidgetType("DropCheapSearchBox",
+		function()
+			-- create a normal EditBox…
+			local widget = AceGUI:Create("EditBox")
+			widget:SetLabel("Search")
+			-- but *immediately* hook its OnTextChanged
+			widget.editbox:HookScript("OnTextChanged", function()
+				local txt = widget.editbox:GetText():lower()
+				module.searchTerm = (txt ~= "") and txt or nil
+				-- believe it or not 0.00 delay does fix the issue with ctrl+backspace and ctrl+a+backspace clearing
+				LibStub("AceTimer-3.0"):ScheduleTimer(function()
+					module:RebuildFilteredRemoveGroup("always")
+				end, 0.00)
+			end)
+			return widget
+		end,
+	1)
+
+
 	LibStub("AceConfigRegistry-3.0"):RegisterOptionsTable("DropTheCheapestThing", options)
 	LibStub("AceConfigDialog-3.0"):AddToBlizOptions("DropTheCheapestThing", "DropTheCheapestThing")
 end
-
-local AceConfigDialog = LibStub("AceConfigDialog-3.0")
 
 local function SetDialogPosition(dialog)
 	--local frame = dialog.frame
