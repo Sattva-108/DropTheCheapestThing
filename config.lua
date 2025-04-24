@@ -7,6 +7,7 @@ local db
 local isCachePerformed = false
 -- Add this near the top of the file with other module variables
 module.searchTerm = nil
+module.lastSearchTerm = nil
 
 function module:removable_item(itemID, list_name)
 	local list_setting
@@ -147,6 +148,11 @@ local function item_list_group(name, order, description, db_table)
 			get = function(info) return module.searchTerm or "" end,
 			set = function(info, v)
 				module.searchTerm = v ~= "" and v:lower() or nil
+				module.lastSearchTerm = module.searchTerm
+
+				AceTimer:ScheduleTimer(function()
+					module:RebuildFilteredRemoveGroup()
+				end, 0.01)
 			end,
 			dialogControl = "EditBox",
 			order = 5,
@@ -158,7 +164,17 @@ local function item_list_group(name, order, description, db_table)
 			desc = "Clear the current search",
 			func = function()
 				module.searchTerm = nil
-				module:Refresh() -- Force immediate update
+				module.lastSearchTerm = nil
+				module.activeTab = "always"
+
+				module:Refresh()
+				local ACD = LibStub("AceConfigDialog-3.0")
+				ACD:SelectGroup("DropTheCheapestThing", "always")
+				ACD:Open("DropTheCheapestThing")
+
+				AceTimer:ScheduleTimer(function()
+					module:HookSearchEditBox()
+				end, 0.3)
 			end,
 			order = 6,
 		}
@@ -480,127 +496,17 @@ local function SetDialogPosition(dialog)
 end
 
 function module:ShowConfig()
+	module.activeTab = "always"
 	print(">> ShowConfig called")
 
-	AceConfigDialog:SelectGroup("DropTheCheapestThing", "always")
-	AceConfigDialog:Open("DropTheCheapestThing")
+	local ACD = LibStub("AceConfigDialog-3.0")
+	ACD:SelectGroup("DropTheCheapestThing", "always")
+	ACD:Open("DropTheCheapestThing")
 	print(">> ConfigDialog opened")
 
-	local dialog = AceConfigDialog.OpenFrames["DropTheCheapestThing"]
-	if not dialog then
-		print(">> ERROR: No dialog frame found!")
-		return
-	end
-
 	AceTimer:ScheduleTimer(function()
-		print(">> Timer fired. Scanning for widgets...")
-
-		local function scan_for_search_editbox(container)
-			if not container or not container.children then return false end
-
-			for _, widget in ipairs(container.children) do
-				print(">> Scanning widget:", widget.type)
-
-				if widget.type == "EditBox" and widget.label and widget.label:GetText() == "Search" then
-					print(">> Found Search EditBox!")
-
-					if not widget._dropcheapHooked then
-						widget._dropcheapHooked = true
-						widget.editbox:HookScript("OnTextChanged", function()
-							local text = widget.editbox:GetText()
-							module.searchTerm = text ~= "" and text:lower() or nil
-
-							AceTimer:ScheduleTimer(function()
-								local dialog = LibStub("AceConfigDialog-3.0").OpenFrames["DropTheCheapestThing"]
-								if not dialog then return end
-
-								local removeGroupWidget
-								local selectedTab
-								for _, child in ipairs(dialog.children or {}) do
-									if child.type == "TreeGroup" or child.type == "TabGroup" then
-										selectedTab = child.status and child.status.selected
-										for _, subChild in ipairs(child.children or {}) do
-											if subChild.type == "ScrollFrame" then
-												for _, grandchild in ipairs(subChild.children or {}) do
-													if grandchild.type == "InlineGroup" and grandchild.titletext:GetText() == "Remove" then
-														removeGroupWidget = grandchild
-														break
-													end
-												end
-											end
-										end
-									end
-								end
-
-								if not removeGroupWidget then
-									print(">> ERROR: Could not locate Remove group widget")
-									return
-								end
-
-								local label = "Always Consider"
-								local db_table = core.db.profile.always_consider
-								if selectedTab == "never" then
-									label = "Never Consider"
-									db_table = core.db.profile.never_consider
-								elseif selectedTab == "auto_delete" then
-									label = "Auto Delete Items"
-									db_table = core.db.profile.auto_delete
-								end
-
-								removeGroupWidget:ReleaseChildren()
-
-								for itemID in pairs(db_table) do
-									local itemName, _, _, _, _, itemType = GetItemInfo(itemID)
-									if itemName and itemType then
-										local itemNameLower = itemName:lower()
-										local showItem = not module.searchTerm or itemNameLower:find(module.searchTerm) or tostring(itemID):find(module.searchTerm)
-
-										if showItem then
-											local entry = module:removable_item(itemID, label)
-											local widget = LibStub("AceGUI-3.0"):Create("Icon")
-											widget:SetImage(entry.image or "Interface\\Icons\\INV_Misc_QuestionMark")
-											widget:SetLabel(entry.name)
-											widget:SetCallback("OnClick", function() entry.func() end)
-											removeGroupWidget:AddChild(widget)
-										end
-									end
-								end
-
-								removeGroupWidget:DoLayout()
-							end, 0.2)
-
-						end)
-
-
-
-
-						print(">> Hooked OnTextChanged successfully")
-					end
-
-					return true
-				end
-
-				-- Recursively scan children
-				if scan_for_search_editbox(widget) then
-					return true
-				end
-			end
-
-			return false
-		end
-
-		local dialog = AceConfigDialog.OpenFrames["DropTheCheapestThing"]
-		if not dialog then
-			print(">> ERROR: No dialog frame found!")
-			return
-		end
-
-		local found = scan_for_search_editbox(dialog)
-		if not found then
-			print(">> ERROR: Could not find Search EditBox after deep scan")
-		end
+		module:HookSearchEditBox()
 	end, 0.3)
-
 
 	module:Refresh()
 end
@@ -757,3 +663,133 @@ function module:RebuildAlwaysConsiderFilteredOnly()
 	return group
 end
 
+function module:RebuildFilteredRemoveGroup(selectedTab)
+	local dialog = LibStub("AceConfigDialog-3.0").OpenFrames["DropTheCheapestThing"]
+	if not dialog then return end
+
+	-- Auto-detect tab
+	if not selectedTab then
+		for _, child in ipairs(dialog.children or {}) do
+			if child.type == "TreeGroup" or child.type == "TabGroup" then
+				selectedTab = child.status and child.status.selected
+			end
+		end
+	end
+
+	-- Only allow rebuilding for "always" tab
+	if selectedTab ~= "always" then
+		print("returning")
+		return
+	end
+	print("returning after")
+
+
+	module.activeTab = selectedTab or "always"
+
+	local db_table, label
+	if selectedTab == "never" then
+		db_table = core.db.profile.never_consider
+		label = "Never Consider"
+	elseif selectedTab == "auto_delete" then
+		db_table = core.db.profile.auto_delete
+		label = "Auto Delete Items"
+	else
+		db_table = core.db.profile.always_consider
+		label = "Always Consider"
+	end
+
+	-- Find the Remove group widget
+	local removeGroupWidget
+	for _, child in ipairs(dialog.children or {}) do
+		if child.type == "TreeGroup" or child.type == "TabGroup" then
+			for _, subChild in ipairs(child.children or {}) do
+				if subChild.type == "ScrollFrame" then
+					for _, grandchild in ipairs(subChild.children or {}) do
+						if grandchild.type == "InlineGroup" and grandchild.titletext:GetText() == "Remove" then
+							removeGroupWidget = grandchild
+							break
+						end
+					end
+				end
+			end
+		end
+	end
+
+	if not removeGroupWidget then
+		print(">> ERROR: Could not locate Remove group widget for", label)
+		return
+	end
+
+	removeGroupWidget:ReleaseChildren()
+
+	for itemID in pairs(db_table) do
+		local itemName, _, _, _, _, itemType = GetItemInfo(itemID)
+		if itemName and itemType then
+			local showItem = true
+			if module.activeTab == "always" and module.searchTerm then
+				local itemNameLower = itemName:lower()
+				local itemIDStr = tostring(itemID)
+				showItem = itemNameLower:find(module.searchTerm) or itemIDStr:find(module.searchTerm)
+			end
+			if showItem then
+				local entry = module:removable_item(itemID, label)
+				local widget = LibStub("AceGUI-3.0"):Create("Icon")
+				widget:SetImage(entry.image or "Interface\\Icons\\INV_Misc_QuestionMark")
+				widget:SetLabel(entry.name)
+				widget:SetCallback("OnClick", function() entry.func() end)
+				removeGroupWidget:AddChild(widget)
+			end
+		end
+	end
+
+	print("called")
+
+	removeGroupWidget:DoLayout()
+end
+
+function module:HookSearchEditBox()
+	local dialog = LibStub("AceConfigDialog-3.0").OpenFrames["DropTheCheapestThing"]
+	if not dialog then return end
+
+	local function scan(container)
+		if not container or not container.children then return false end
+
+		for _, widget in ipairs(container.children) do
+			if widget.type == "EditBox" and widget.label and widget.label:GetText() == "Search" then
+				if not widget._dropcheapHooked then
+					widget._dropcheapHooked = true
+
+					local function onUpdateSearchFilter()
+						local newTerm = widget.editbox:GetText()
+						newTerm = newTerm ~= "" and newTerm:lower() or nil
+
+						if module.lastSearchTerm == newTerm then return end
+
+						module.searchTerm = newTerm
+						module.lastSearchTerm = newTerm
+
+						AceTimer:ScheduleTimer(function()
+							module:RebuildFilteredRemoveGroup()
+						end, 0.2)
+					end
+
+					widget.editbox:HookScript("OnTextChanged", onUpdateSearchFilter)
+					widget.editbox:HookScript("OnEnterPressed", onUpdateSearchFilter)
+
+					print(">> Hooked EditBox for live + enter filtering")
+				end
+
+				return true
+			end
+
+			if scan(widget) then return true end
+		end
+
+		return false
+	end
+
+	local found = scan(dialog)
+	if not found then
+		print(">> ERROR: Search EditBox not found during HookSearchEditBox")
+	end
+end
