@@ -619,7 +619,8 @@ function SlashCmdList.DROPTHECHEAPESTTHING()
 end
 
 function module:RebuildFilteredRemoveGroup(selectedTab)
-	if not module.searchTerm or module.searchTerm == "" then
+	print("called")
+	if (not module.searchTerm or module.searchTerm == "") and (not module.searchBox or not module.searchBox.editbox:HasFocus()) then
 		return
 	end
 
@@ -708,7 +709,9 @@ function module:HookSearchEditBox()
 		if not container or not container.children then return false end
 
 		for _, widget in ipairs(container.children) do
+			print(widget)
 			if widget.type == "EditBox" and widget.label and widget.label:GetText() == "Search" then
+				module.searchBox = widget
 				if not widget._dropcheapHooked then
 					widget._dropcheapHooked = true
 
