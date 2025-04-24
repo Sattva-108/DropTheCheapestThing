@@ -168,6 +168,7 @@ local function item_list_group(name, order, description, db_table)
 		validate = function(info, v)
 			if v:match("^%d+$") or v:match("item:%d+") then return true end
 		end,
+		dialogControl = "DropCheapAddBox",
 		order = 5,
 		width = "quarter",
 	}
@@ -487,6 +488,30 @@ function module:OnInitialize()
 				return widget
 			end,
 			1)
+
+	-- a bespoke EditBox just for your "Add" field
+	AceGUI:RegisterWidgetType("DropCheapAddBox",
+			function()
+				local widget = AceGUI:Create("EditBox")
+				widget:SetLabel("Add")
+
+				-- preserve the original drag handler...
+				local orig = widget.editbox:GetScript("OnReceiveDrag")
+				-- then hook *after* it runs, only on *this* widget:
+				widget.editbox:HookScript("OnReceiveDrag", function(self, ...)
+					-- call the original so item-links still get dropped in correctly
+					orig(self, ...)
+					-- then clear focus a moment later
+					AceTimer:ScheduleTimer(function()
+						widget:ClearFocus()
+					end, 0.01)
+				end)
+
+				return widget
+			end,
+			1
+	)
+
 
 
 	LibStub("AceConfigRegistry-3.0"):RegisterOptionsTable("DropTheCheapestThing", options)
