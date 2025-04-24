@@ -156,10 +156,21 @@ local function item_list_group(name, order, description, db_table)
 			local itemid = core.link_to_id(v) or tonumber(v)
 			db_table[itemid] = true
 
-			local itemName, _, _, _, _, itemType = GetItemInfo(itemid)
+			local itemName, itemLink, itemRarity, _, _, itemType = GetItemInfo(itemid)
 			if itemName and itemType then
 				local category = module:CreateCategory(itemType, group.args.remove)
 				category.args[tostring(itemid)] = module:removable_item(itemid, name)
+			end
+			-- itemLink will be something like "|cff9d9d9d[Worn Shortsword]|r"
+			local display = itemLink or ( select(4,GetItemQualityColor(itemRarity)) .. (itemName or "") .. "|r" )
+
+			local frame = AceConfigDialog.OpenFrames["DropTheCheapestThing"]
+			if frame then
+				frame:SetStatusText(("Added %s"):format(display))
+				-- clear it after 5s
+				AceTimer:ScheduleTimer(function()
+					if frame then frame:SetStatusText("") end
+				end, 5)
 			end
 
 			core:BAG_UPDATE()
