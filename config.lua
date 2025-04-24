@@ -273,12 +273,6 @@ local function item_list_group(name, order, description, db_table)
 		if itemName and itemType then
 			local showItem = true
 
-			if name == "Always Consider" and module.searchTerm then
-				local itemNameLower = itemName:lower()
-				local itemIDStr = tostring(itemID)
-				showItem = itemNameLower:find(module.searchTerm) or itemIDStr:find(module.searchTerm)
-			end
-
 			if showItem then
 				local category = module:CreateCategory(itemType, group.args.remove)
 				category.args[tostring(itemID)] = module:removable_item(itemID, name)
@@ -626,41 +620,6 @@ SLASH_DROPTHECHEAPESTTHING1 = "/dropcheap"
 SLASH_DROPTHECHEAPESTTHING2 = "/dtct"
 function SlashCmdList.DROPTHECHEAPESTTHING()
 	module:ShowConfig()
-end
-
-function module:RebuildAlwaysConsiderFilteredOnly()
-	local group = {
-		type = "group",
-		name = "Always Consider",
-		args = {
-			remove = {
-				type = "group",
-				inline = true,
-				name = "Remove",
-				order = 20,
-				args = {},
-			}
-		}
-	}
-
-	for itemID in pairs(core.db.profile.always_consider) do
-		local itemName, _, _, _, _, itemType = GetItemInfo(itemID)
-		if itemName and itemType then
-			local showItem = true
-			if module.searchTerm then
-				local itemNameLower = itemName:lower()
-				local itemIDStr = tostring(itemID)
-				showItem = itemNameLower:find(module.searchTerm) or itemIDStr:find(module.searchTerm)
-			end
-
-			if showItem then
-				local category = module:CreateCategory(itemType, group.args.remove)
-				category.args[tostring(itemID)] = module:removable_item(itemID, "Always Consider")
-			end
-		end
-	end
-
-	return group
 end
 
 function module:RebuildFilteredRemoveGroup(selectedTab)
