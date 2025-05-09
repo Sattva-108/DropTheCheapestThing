@@ -36,6 +36,26 @@ core.slot_valuesources = slot_valuesources
 core.events = LibStub("CallbackHandler-1.0"):New(core)
 core.has_loaded = false
 
+local clearSellQueue = {}
+local clearSellTimer
+
+function core:ProcessClearChunk()
+    -- hide up to 10 AdiBags frames each tick
+    for i = 1, 2 do
+        local frameName = tremove(clearSellQueue, 1)
+        if not frameName then
+            AceTimer:CancelTimer(clearSellTimer)
+            clearSellTimer = nil
+            return
+        end
+        local btn = _G[frameName]
+        if btn and btn.textureFrame then
+            btn.textureFrame:Hide()
+        end
+    end
+end
+
+
 function core:OnInitialize()
     db = LibStub("AceDB-3.0"):New("DropTheCheapestThingDB", {
         profile = {
@@ -526,23 +546,30 @@ end
 core.markItemForSale = markItemForSale
 
 function clearSellIcons()
+    -- 1) clear regular Blizzard bag icons immediately
     for bag = 0, NUM_BAG_SLOTS do
-        local bagsSlotCount = GetContainerNumSlots(bag)
-        for slot = 1, bagsSlotCount do
-            local itemButton = _G["ContainerFrame" .. bag + 1 .. "Item" .. bagsSlotCount - slot + 1]
+        local slotCount = GetContainerNumSlots(bag)
+        for slot = 1, slotCount do
+            local itemButton = _G["ContainerFrame"..(bag+1).."Item"..(slotCount-slot+1)]
             if itemButton and itemButton.textureFrame then
                 itemButton.textureFrame:Hide()
             end
-            if AdiBagsItemButton1 then
-                for i = 1, 360 do
-                    local frameName = "AdiBagsItemButton" .. i
-                    local adiBagsButton = _G[frameName]
-                    if adiBagsButton and adiBagsButton.textureFrame then
-                        adiBagsButton.textureFrame:Hide()
-                    end
-                end
-            end
         end
+    end
+
+    -- 2) queue and stagger AdiBags icon clears
+    if clearSellTimer then
+        AceTimer:CancelTimer(clearSellTimer)
+        clearSellTimer = nil
+    end
+    wipe(clearSellQueue)
+    if AdiBagsItemButton1 then
+        for i = 1, 360 do
+            tinsert(clearSellQueue, "AdiBagsItemButton"..i)
+        end
+        clearSellTimer = AceTimer:ScheduleRepeatingTimer(function()
+            core:ProcessClearChunk()
+        end, 0.02)
     end
 end
 core.clearSellIcons = clearSellIcons
