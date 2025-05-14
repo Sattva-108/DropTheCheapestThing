@@ -78,7 +78,7 @@ function core:OnPlayerLogin()
             end
         end
         self:ScheduleBagUpdate() -- Initial scan
-    end, 10) -- 5 second delay after login
+    end, 5) -- 5 second delay after login
     self.has_loaded = true
 end
 
@@ -200,37 +200,46 @@ function core:_BAG_UPDATE_INTERNAL()
         end
     end
 
-    table.sort(drop_slots, slot_sorter)
-    table.sort(sell_slots, slot_sorter)
-    self.events:Fire("Junk_Update", #drop_slots, #sell_slots, total_drop, total_sell, total)
+
 
     -- 2. Update Icons for Standard Bags
-    clearSellIcons() -- Clears old standard bag icons
-    for bag = 0, NUM_BAG_SLOTS do -- Iterate only backpack and player bags, not bank unless open
+    clearSellIcons() -- Clears old standard bag icons (ensure this function itself is correct for standard bags)
+
+    -- Re-iterate to apply icons to standard bags, using THE CORRECT OLD INDEXING
+    for bag = 0, NUM_BAG_SLOTS do
         local containerFrame = _G["ContainerFrame" .. (bag + 1)]
-        if containerFrame and containerFrame:IsShown() then -- Only update visible standard bags
-            local bagsSlotCount = GetContainerNumSlots(bag)
+        if containerFrame and containerFrame:IsShown() then
+            local bagsSlotCount = GetContainerNumSlots(bag) -- Get bagsSlotCount here
             for slot = 1, bagsSlotCount do
-                local itemLink = GetContainerItemLink(bag, slot)
-                if itemLink then
-                    local itemid = link_to_id(itemLink)
-                    local itemButtonStd = _G["ContainerFrame" .. (bag + 1) .. "Item" .. slot]
-                    if itemButtonStd and itemid then
-                        -- Determine if this item should be marked based on current lists
-                        local shouldBeMarked = false
-                        if (db.profile.always_consider[itemid] and not db.profile.never_consider[itemid]) then
-                            shouldBeMarked = true
-                        end
-                        if core.db.profile.sell_next_vendor[itemid] then
-                            local itemName = GetItemInfo(itemLink)
-                            local uniqueIdentifier = characterName .. ":" .. (itemName or "")
-                            if tContains(core.db.profile.sell_next_vendor[itemid], uniqueIdentifier) then
+                -- ***** THIS IS THE CRUCIAL FIX FOR STANDARD BAGS *****
+                local itemButtonStd = _G["ContainerFrame" .. (bag + 1) .. "Item" .. (bagsSlotCount - slot + 1)]
+                -- ******************************************************
+
+                if itemButtonStd then -- Check if the button itself exists
+                    local itemLink = GetContainerItemLink(bag, slot) -- Get link based on logical bag/slot
+                    if itemLink then
+                        local itemid = link_to_id(itemLink)
+                        if itemid then
+                            local shouldBeMarked = false
+                            if (db.profile.always_consider[itemid] and not db.profile.never_consider[itemid]) then
                                 shouldBeMarked = true
                             end
+                            if core.db.profile.sell_next_vendor[itemid] then
+                                local itemName = GetItemInfo(itemLink)
+                                local uniqueIdentifier = characterName .. ":" .. (itemName or "")
+                                if tContains(core.db.profile.sell_next_vendor[itemid], uniqueIdentifier) then
+                                    shouldBeMarked = true
+                                end
+                            end
+                            -- Call markItemForSale with the correctly identified button and its logical bag/slot
+                            markItemForSale(itemButtonStd, itemid, itemLink, characterName, bag, slot, false)
+                        else
+                            -- No valid itemid from link, ensure icon on this specific button is hidden
+                            if itemButtonStd.textureFrame then itemButtonStd.textureFrame:Hide() end
                         end
-                        markItemForSale(itemButtonStd, itemid, itemLink, characterName, bag, slot, false)
-                    elseif itemButtonStd and itemButtonStd.textureFrame then
-                        itemButtonStd.textureFrame:Hide() -- Explicitly hide if no item or itemid
+                    else
+                        -- No itemLink in this logical bag/slot, ensure icon on this specific button is hidden
+                        if itemButtonStd.textureFrame then itemButtonStd.textureFrame:Hide() end
                     end
                 end
             end
@@ -283,6 +292,9 @@ function core:_BAG_UPDATE_INTERNAL()
         -- For now, let's keep it to be safe, as AdiBags might do other layout updates.
     end
     if AdiBags then AdiBags:SendMessage("AdiBags_UpdateAllButtons") end -- Keep this for now
+    table.sort(drop_slots, slot_sorter)
+    table.sort(sell_slots, slot_sorter)
+    self.events:Fire("Junk_Update", #drop_slots, #sell_slots, total_drop, total_sell, total)
 end
 
 
