@@ -98,7 +98,7 @@ function module:removable_item(itemID, list_name)
 			arg = itemID,
 			func = function()
 				core.db.profile[list_setting][itemID] = nil
-				core:BAG_UPDATE()
+				core:_BAG_UPDATE_INTERNAL()
 
 				-- Update the GUI
 				local args = module.options.args[list_setting] and module.options.args[list_setting].args.remove.args
@@ -136,7 +136,7 @@ function module:removable_item(itemID, list_name)
 		core.db.profile[list_setting][itemID] = nil
 
 		-- 2) update bags/UI
-		core:BAG_UPDATE()
+		core:_BAG_UPDATE_INTERNAL()
 
 		-- 3) strip it out of the options args table so it disappears immediately
 		local args = module.options.args[list_setting]
@@ -283,7 +283,7 @@ local function item_list_group(name, order, description, db_table)
 			end
 
 
-			core:BAG_UPDATE()
+			core:_BAG_UPDATE_INTERNAL()
 			AceTimer:ScheduleTimer(function() _G["AceGUI-3.0EditBox2"]:ClearFocus() end, 0.01)
 		end,
 		validate = function(info, v)
@@ -409,7 +409,7 @@ local function item_list_group(name, order, description, db_table)
 				arg = itemID,
 				func = function()
 					core.db.profile[list_setting][itemID] = nil
-					core:BAG_UPDATE()
+					core:_BAG_UPDATE_INTERNAL()
 					LibStub("AceConfigRegistry-3.0"):NotifyChange("DropTheCheapestThing")
 					module:Refresh()
 				end,
@@ -485,7 +485,7 @@ function module:OnInitialize()
 		type = "group",
 		name = "DropTheCheapestThing",
 		get = function(info) return db.profile[info[#info]] end,
-		set = function(info, v) db.profile[info[#info]] = v; core:BAG_UPDATE() end,
+		set = function(info, v) db.profile[info[#info]] = v; core:_BAG_UPDATE_INTERNAL() end,
 		args = {
 			general = {
 				type = "group",
@@ -549,7 +549,7 @@ function module:OnInitialize()
 						desc = "Select one of the available profiles",
 						values = getProfileList,
 						get = function() return db:GetCurrentProfile() end,
-						set = function(_, profileKey) db:SetProfile(profileKey); module:Refresh() core:BAG_UPDATE() print("Switched to profile:", profileKey) end,
+						set = function(_, profileKey) db:SetProfile(profileKey); module:Refresh() core:_BAG_UPDATE_INTERNAL() print("Switched to profile:", profileKey) end,
 						order = 10,
 					},
 					blank1 = {
@@ -712,7 +712,7 @@ function module:AddItemToAlwaysConsider(itemID)
 	end
 
 	core.db.profile.always_consider[itemID] = true
-	core:BAG_UPDATE()
+	core:_BAG_UPDATE_INTERNAL()
 
 	LibStub("AceConfigRegistry-3.0"):NotifyChange("DropTheCheapestThing")
 end
@@ -731,7 +731,7 @@ function module:AddItemToNeverConsider(itemID)
 	end
 
 	core.db.profile.never_consider[itemID] = true
-	core:BAG_UPDATE()
+	core:_BAG_UPDATE_INTERNAL()
 
 	LibStub("AceConfigRegistry-3.0"):NotifyChange("DropTheCheapestThing")
 end
@@ -750,7 +750,7 @@ function module:AutoDeleteItem(itemID)
 	end
 
 	core.db.profile.auto_delete[itemID] = true
-	core:BAG_UPDATE()
+	core:_BAG_UPDATE_INTERNAL()
 
 	LibStub("AceConfigRegistry-3.0"):NotifyChange("DropTheCheapestThing")
 end

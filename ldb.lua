@@ -25,7 +25,7 @@ function dataobject:OnClick(button)
 
 		if itemID then
 			core.db.profile.always_consider[itemID] = true
-			core:BAG_UPDATE()
+			core:_BAG_UPDATE_INTERNAL()
 
 			-- Update the 'always consider' list in the GUI
 			local config = core:GetModule("Config", true)
@@ -49,7 +49,7 @@ function dataobject:OnClick(button)
 			local id = core.link_to_id(core.slot_contents[table.remove(slots, 1)])
 			if not id then return end -- this really shouldn't happen... but just in case
 			core.db.profile.never_consider[id] = true
-			core:BAG_UPDATE()
+			core:_BAG_UPDATE_INTERNAL()
 
 			-- Update the 'never consider' list in the GUI
 			local config = core:GetModule("Config", true)
@@ -149,7 +149,7 @@ function module:OnInitialize()
 				end,
 				set = function(info, key, v)
 					self.db.profile.text[key] = v
-					core:BAG_UPDATE()
+					core:_BAG_UPDATE_INTERNAL()
 				end,
 				values = {
 					item = "Cheapest item",

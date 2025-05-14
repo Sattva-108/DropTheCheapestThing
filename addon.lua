@@ -52,38 +52,36 @@ function core:OnInitialize()
             print_delete_toggle = false,
             sell_next_vendor = {}
         },
-    }, DEFAULT)
+    }, "Default") -- Added "Default" profile name, AceDB-3.0 needs it
     self.db = db
-    self:RegisterBucketEvent("BAG_UPDATE", 2)
+    self:RegisterBucketEvent("BAG_UPDATE", 2, "ThrottledBagUpdate") -- Use a different method name for bucketed event
     self:RegisterEvent("MERCHANT_SHOW")
     self:RegisterEvent("MERCHANT_CLOSED")
+    self:RegisterEvent("PLAYER_LOGIN", "OnPlayerLogin") -- For initial setup
 
-    if MerchantFrame:IsVisible() then
-        self:MERCHANT_SHOW()
-    end
+    -- No need to check MerchantFrame:IsVisible() here, MERCHANT_SHOW will handle it if already open.
 end
 
-if IsAddOnLoaded("AdiBags") then
-    if not core.has_loaded then
-        AceTimer:ScheduleTimer(function()
-            ToggleBackpack()
-        end, 0.1)
-        AceTimer:ScheduleTimer(function()
-            ToggleBackpack()
-        end, 0.3)
-        AceTimer:ScheduleTimer(function()
-            if AdiBagsContainer1 then
+function core:OnPlayerLogin()
+    -- Initial bag update after a delay to ensure everything is loaded
+    AceTimer:ScheduleTimer(function()
+        if IsAddOnLoaded("AdiBags") and AdiBagsContainer1 then
+            -- Hook AdiBags if it's present
+            if not AdiBagsContainer1.dtctHooked then -- Prevent multiple hooks
                 AdiBagsContainer1:HookScript("OnHide", function()
-                    core:BAG_UPDATE() -- this is a hack to make sure the bag is updated
+                    -- self:_BAG_UPDATE_INTERNAL() -- Consider if this is needed or too much
                 end)
                 AdiBagsContainer1:HookScript("OnShow", function()
-                    core:BAG_UPDATE()
+                    self:ScheduleBagUpdate() -- Use scheduled update
                 end)
+                AdiBagsContainer1.dtctHooked = true
             end
-        end, 2)
-        core.has_loaded = true
-    end
+        end
+        self:ScheduleBagUpdate() -- Initial scan
+    end, 10) -- 5 second delay after login
+    self.has_loaded = true
 end
+
 
 function core:Print(...)
     ChatFrame1:AddMessage(string.join(" ", "|cFF33FF99DropTCT|r:", ...))
@@ -92,12 +90,14 @@ end
 function core:MERCHANT_SHOW()
     Debug("MERCHANT_SHOW")
     self.at_merchant = true
+    self:ScheduleBagUpdate() -- Update when merchant opens, as sellability might change
     self.events:Fire("Merchant_Open")
 end
 
 function core:MERCHANT_CLOSED()
     Debug("MERCHANT_CLOSED")
     self.at_merchant = nil
+    self:ScheduleBagUpdate() -- Update when merchant closes
     self.events:Fire("Merchant_Close")
 end
 
@@ -113,7 +113,29 @@ function item_value(item, force_vendor)
 end
 core.item_value = item_value
 
-function core:BAG_UPDATE()
+local bagUpdateScheduled = nil
+function core:ScheduleBagUpdate()
+    if bagUpdateScheduled then
+        AceTimer:CancelTimer(bagUpdateScheduled)
+    end
+    -- print("DTCT: Scheduling _BAG_UPDATE_INTERNAL")
+    bagUpdateScheduled = AceTimer:ScheduleTimer(function()
+        -- print("DTCT: Executing scheduled _BAG_UPDATE_INTERNAL")
+        self:_BAG_UPDATE_INTERNAL()
+        bagUpdateScheduled = nil
+    end, 0.1) -- Consolidate updates within a 0.5 sec window
+end
+
+function core:ThrottledBagUpdate() -- Renamed to avoid conflict with direct calls
+    -- print("DTCT: ThrottledBagUpdate (from bucket)")
+    self:ScheduleBagUpdate()
+end
+
+
+-- Replace the existing _BAG_UPDATE_INTERNAL function with this one.
+
+function core:_BAG_UPDATE_INTERNAL()
+    -- print("DTCT: _BAG_UPDATE_INTERNAL running")
     table.wipe(drop_slots)
     table.wipe(sell_slots)
     table.wipe(slot_contents)
@@ -124,19 +146,14 @@ function core:BAG_UPDATE()
     table.wipe(slot_valuesources)
 
     local total, total_sell, total_drop = 0, 0, 0
+    local characterName = UnitName("player")
 
-    clearSellIcons()
-
+    -- 1. Process all items to populate drop_slots, sell_slots, and other data
+    -- This part remains largely the same, but we won't try to update icons here yet.
     for bag = 0, NUM_BAG_SLOTS do
         local bagsSlotCount = GetContainerNumSlots(bag)
         for slot = 1, bagsSlotCount do
             local itemid, link, count, stacksize, quality, value, source = GetConsideredItemInfo(bag, slot)
-
-            -- First Remove all the coin textures.
-            local itemButton = _G["ContainerFrame" .. bag + 1 .. "Item" .. bagsSlotCount - slot + 1]
-            if itemButton and itemButton.textureFrame then
-                itemButton.textureFrame:Hide()
-            end
 
             if itemid then
                 local bagslot = encode_bagslot(bag, slot)
@@ -146,50 +163,39 @@ function core:BAG_UPDATE()
                 slot_values[bagslot] = value * count
                 slot_weightedvalues[bagslot] = db.profile.full_stacks and (value * stacksize) or (value * count)
                 slot_valuesources[bagslot] = source
+
+                local isDropCandidate = false
                 if db.profile.always_consider[itemid] or quality <= db.profile.threshold then
-                    total_drop = total_drop + slot_values[bagslot]
+                    isDropCandidate = true
                     table.insert(drop_slots, bagslot)
+                    total_drop = total_drop + slot_values[bagslot]
                 end
-                if db.profile.always_consider[itemid] or quality <= db.profile.sell_threshold then
-                    total_sell = total_sell + slot_values[bagslot]
-                    table.insert(sell_slots, bagslot)
+
+                local isSellCandidate = false
+                if db.profile.always_consider[itemid] then -- always_consider items are sell candidates
+                    isSellCandidate = true
+                elseif quality <= db.profile.sell_threshold then
+                    isSellCandidate = true
                 end
-                local characterName = UnitName("player")
+
+                local itemNameFromLink = GetItemInfo(link)
                 if core.db.profile.sell_next_vendor[itemid] then
                     for _, uniqueIdentifier in ipairs(core.db.profile.sell_next_vendor[itemid]) do
                         local storedCharacterName, storedItemName = string.match(uniqueIdentifier, "(.-):(.*)")
-                        local name = GetItemInfo(link)
-                        if storedCharacterName == characterName and storedItemName == name then
-                            -- This item matches both the character and the specific item name
-                            slot_contents[bagslot] = link
-                            table.insert(sell_slots, bagslot)
-                            total_sell = total_sell + slot_values[bagslot]
-                            break -- Found a match, no need to check further
+                        if storedCharacterName == characterName and storedItemName == itemNameFromLink then
+                            isSellCandidate = true
+                            break
                         end
                     end
                 end
+
+                if isSellCandidate then
+                    if not tContains(sell_slots, bagslot) then
+                        table.insert(sell_slots, bagslot)
+                    end
+                    total_sell = total_sell + slot_values[bagslot]
+                end
                 total = total + slot_values[bagslot]
-
-                -- Introduce a delay before calling markItemForSale
-                AceTimer:ScheduleTimer(function()
-                    -- Pass the itemButton directly for standard bags
-                    if itemButton and not AdiBagsItemButton1 then
-                        markItemForSale(itemButton, itemid, link, characterName)
-                    end
-
-                    -- Handle AdiBags separately
-                    if AdiBagsItemButton1 then
-                        -- Assuming AdiBagsItemButton1 exists if AdiBags is loaded
-                        for i = 1, 360 do
-                            local frameName = "AdiBagsItemButton" .. i
-                            local adiBagsButton = _G[frameName]
-                            if adiBagsButton and adiBagsButton:IsShown() and adiBagsButton.bag == bag and adiBagsButton.slot == slot then
-                                markItemForSale(adiBagsButton, itemid, link, characterName)
-                                break
-                            end
-                        end
-                    end
-                end, 0.2) -- Delay of 0.1 seconds
             end
         end
     end
@@ -197,41 +203,124 @@ function core:BAG_UPDATE()
     table.sort(drop_slots, slot_sorter)
     table.sort(sell_slots, slot_sorter)
     self.events:Fire("Junk_Update", #drop_slots, #sell_slots, total_drop, total_sell, total)
+
+    -- 2. Update Icons for Standard Bags
+    clearSellIcons() -- Clears old standard bag icons
+    for bag = 0, NUM_BAG_SLOTS do -- Iterate only backpack and player bags, not bank unless open
+        local containerFrame = _G["ContainerFrame" .. (bag + 1)]
+        if containerFrame and containerFrame:IsShown() then -- Only update visible standard bags
+            local bagsSlotCount = GetContainerNumSlots(bag)
+            for slot = 1, bagsSlotCount do
+                local itemLink = GetContainerItemLink(bag, slot)
+                if itemLink then
+                    local itemid = link_to_id(itemLink)
+                    local itemButtonStd = _G["ContainerFrame" .. (bag + 1) .. "Item" .. slot]
+                    if itemButtonStd and itemid then
+                        -- Determine if this item should be marked based on current lists
+                        local shouldBeMarked = false
+                        if (db.profile.always_consider[itemid] and not db.profile.never_consider[itemid]) then
+                            shouldBeMarked = true
+                        end
+                        if core.db.profile.sell_next_vendor[itemid] then
+                            local itemName = GetItemInfo(itemLink)
+                            local uniqueIdentifier = characterName .. ":" .. (itemName or "")
+                            if tContains(core.db.profile.sell_next_vendor[itemid], uniqueIdentifier) then
+                                shouldBeMarked = true
+                            end
+                        end
+                        markItemForSale(itemButtonStd, itemid, itemLink, characterName, bag, slot, false)
+                    elseif itemButtonStd and itemButtonStd.textureFrame then
+                        itemButtonStd.textureFrame:Hide() -- Explicitly hide if no item or itemid
+                    end
+                end
+            end
+        end
+    end
+
+
+    -- 3. Update Icons for AdiBags
+    if AdiBags then
+        -- Iterate ALL potentially visible AdiBags buttons and update their icon state.
+        -- This is still the "iterate 1 to 360" approach, which isn't ideal for performance
+        -- but is necessary for this direct manipulation method if we don't have a better way
+        -- to get only currently rendered AdiBags buttons.
+        for i = 1, 360 do -- Max possible AdiBags buttons
+            local frameName = "AdiBagsItemButton" .. i
+            local adiButton = _G[frameName]
+
+            if adiButton and adiButton:IsShown() and adiButton.bag and adiButton.slot then
+                local itemLink = GetContainerItemLink(adiButton.bag, adiButton.slot)
+                if itemLink then
+                    local itemid = link_to_id(itemLink)
+                    if itemid then
+                        -- Determine if this AdiBags item should be marked
+                        local shouldBeMarked = false
+                        if (db.profile.always_consider[itemid] and not db.profile.never_consider[itemid]) then
+                            shouldBeMarked = true
+                        end
+                        if core.db.profile.sell_next_vendor[itemid] then
+                            local itemName = GetItemInfo(itemLink)
+                            local uniqueIdentifier = characterName .. ":" .. (itemName or "")
+                            if tContains(core.db.profile.sell_next_vendor[itemid], uniqueIdentifier) then
+                                shouldBeMarked = true
+                            end
+                        end
+                        markItemForSale(adiButton, itemid, itemLink, characterName, adiButton.bag, adiButton.slot, true)
+                    else
+                        -- No valid itemid from link, ensure icon is hidden
+                        if adiButton.dtctSellIcon then adiButton.dtctSellIcon:Hide() end
+                    end
+                else
+                    -- No itemLink in this AdiBags button slot, ensure icon is hidden
+                    if adiButton.dtctSellIcon then adiButton.dtctSellIcon:Hide() end
+                end
+            end
+        end
+        -- AdiBags:SendMessage("AdiBags_UpdateAllButtons") -- This might be redundant if we are manually updating icons,
+        -- but could be needed if AdiBags does other things.
+        -- If performance is good, leave it. If not, try removing.
+        -- Given we directly manipulate, it might be safe to remove or make conditional.
+        -- For now, let's keep it to be safe, as AdiBags might do other layout updates.
+    end
+    if AdiBags then AdiBags:SendMessage("AdiBags_UpdateAllButtons") end -- Keep this for now
 end
 
--- The rest is utility functions used above:
 
 function GetConsideredItemInfo(bag, slot)
-    -- this tells us whether or not the item in this slot could possibly be a candidate for dropping/selling
     local link = GetContainerItemLink(bag, slot)
-    if not link then
-        return
-    end -- empty slot!
+    if not link then return end
 
     local _, count, _, quality = GetContainerItemInfo(bag, slot)
     local stacksize = select(8, GetItemInfo(link))
-    -- quality_ is -1 if the item requires "special handling"; stackable, quest, whatever.
-    -- I'm not actually sure how best to handle this; it's not really a problem with greys, but
-    -- whites and above could have quest-item issues. Though I suppose quest items don't have
-    -- vendor values, so...
-    if quality == -1 then
-        quality = select(3, GetItemInfo(link))
-    end
-    if not quality then
-        return
-    end -- if we don't know the quality now, something weird is going on
+    if quality == -1 then quality = select(3, GetItemInfo(link)) end
+    if not quality then return end
 
     local itemid = link_to_id(link)
-    if db.profile.never_consider[itemid] then
+    if db.profile.never_consider[itemid] then return end
+
+    -- Simplified condition: if it's not always_consider and above both thresholds, and not in sell_next_vendor, ignore.
+    local itemNameFromLink = GetItemInfo(link) -- Get name for sell_next_vendor check
+    local characterName = UnitName("player")
+    local inSellNextVendorList = false
+    if core.db.profile.sell_next_vendor[itemid] then
+        for _, uniqueIdentifier in ipairs(core.db.profile.sell_next_vendor[itemid]) do
+            local storedCharacterName, storedItemName = string.match(uniqueIdentifier, "(.-):(.*)")
+            if storedCharacterName == characterName and storedItemName == itemNameFromLink then
+                inSellNextVendorList = true
+                break
+            end
+        end
+    end
+
+    if not db.profile.always_consider[itemid] and
+            quality > db.profile.threshold and
+            quality > db.profile.sell_threshold and
+            not inSellNextVendorList then
         return
     end
-    if not db.profile.always_consider[itemid] and quality > db.profile.threshold and quality > db.profile.sell_threshold and not core.db.profile.sell_next_vendor[itemid] then
-        return
-    end
+
     local value, source = item_value(itemid, quality < db.profile.auction_threshold)
-    if (not value) or value == 0 then
-        return
-    end
+    if (not value) or value == 0 then return end
     return itemid, link, count, stacksize, quality, value, source
 end
 
@@ -247,35 +336,30 @@ end
 
 function link_to_id(link)
     return link and tonumber(string.match(link, "item:(%d+)"))
-end -- "item" because we only care about items, duh
+end
 core.link_to_id = link_to_id
 
 function pretty_bagslot_name(bagslot, show_name, show_count, force_count)
-    if not bagslot or not slot_contents[bagslot] then
-        return "???"
-    end
-    if show_name == nil then
-        show_name = true
-    end
-    if show_count == nil then
-        show_count = true
-    end
+    if not bagslot or not slot_contents[bagslot] then return "???" end
+    if show_name == nil then show_name = true end
+    if show_count == nil then show_count = true end
     local link = slot_contents[bagslot]
-    local name = link:gsub("[%[%]]", "")
+    local name = GetItemInfo(link) -- Use GetItemInfo for name to be consistent
     local max = select(8, GetItemInfo(link))
-    return (show_name and link:gsub("[%[%]]", "") or '') ..
+    return (show_name and name or '') .. -- Changed to use name from GetItemInfo
             ((show_name and show_count) and ' ' or '') ..
             ((show_count and (force_count or max > 1)) and (slot_counts[bagslot] .. '/' .. max) or '')
 end
 core.pretty_bagslot_name = pretty_bagslot_name
 
 function copper_to_pretty_money(c)
+    if c == nil then c = 0 end -- Safety for nil values
     if c >= 10000 then
-        return ("|cffffffff%d|r|cffffd700g|r|cffffffff%d|r|cffc7c7cfs|r|cffffffff%d|r|cffeda55fc|r"):format(c / 10000, (c / 100) % 100, c % 100)
+        return ("|cffffffff%d|r|cffffd700g|r|cffffffff%d|r|cffc7c7cfs|r|cffffffff%d|r|cffeda55fc|r"):format(floor(c / 10000), floor((c / 100) % 100), floor(c % 100))
     elseif c >= 100 then
-        return ("|cffffffff%d|r|cffc7c7cfs|r|cffffffff%d|r|cffeda55fc|r"):format((c / 100) % 100, c % 100)
+        return ("|cffffffff%d|r|cffc7c7cfs|r|cffffffff%d|r|cffeda55fc|r"):format(floor((c / 100) % 100), floor(c % 100))
     else
-        return ("|cffffffff%d|r|cffeda55fc|r"):format(c % 100)
+        return ("|cffffffff%d|r|cffeda55fc|r"):format(floor(c % 100))
     end
 end
 core.copper_to_pretty_money = copper_to_pretty_money
@@ -303,12 +387,8 @@ function add_junk_to_tooltip(tooltip, slots)
 end
 core.add_junk_to_tooltip = add_junk_to_tooltip
 
-function encode_bagslot(bag, slot)
-    return (bag * 100) + slot
-end
-function decode_bagslot(int)
-    return math.floor(int / 100), int % 100
-end
+function encode_bagslot(bag, slot) return (bag * 100) + slot end
+function decode_bagslot(int) return math.floor(int / 100), int % 100 end
 core.encode_bagslot = encode_bagslot
 core.decode_bagslot = decode_bagslot
 
@@ -317,235 +397,226 @@ function drop_bagslot(bagslot, sell_only)
     Debug("At merchant?", core.at_merchant and 'yes' or 'no')
     local bag, slot = decode_bagslot(bagslot)
     if CursorHasItem() then
-        return DEFAULT_CHAT_FRAME:AddMessage(("DropTheCheapestThing Error: Can't delete/sell items while an item is on the cursor. Aborting."):format(slot_contents[bagslot], GetContainerItemLink(bag, slot)), 1, 0, 0)
+        return DEFAULT_CHAT_FRAME:AddMessage(("DropTheCheapestThing Error: Can't delete/sell items while an item is on the cursor. Aborting."), 1, 0, 0)
     end
     if sell_only and not core.at_merchant then
-        return DEFAULT_CHAT_FRAME:AddMessage(("DropTheCheapestThing Error: Can't sell items while not at a merchant. Aborting."):format(slot_contents[bagslot], GetContainerItemLink(bag, slot)), 1, 0, 0)
+        return DEFAULT_CHAT_FRAME:AddMessage(("DropTheCheapestThing Error: Can't sell items while not at a merchant. Aborting."), 1, 0, 0)
     end
     if not (bagslot and slot_contents[bagslot]) then
         return DEFAULT_CHAT_FRAME:AddMessage("DropTheCheapestThing Error: Nothing found in requested slot. Aborting.", 1, 0, 0)
     end
-    if slot_contents[bagslot] ~= GetContainerItemLink(bag, slot) then
-        return DEFAULT_CHAT_FRAME:AddMessage(("DropTheCheapestThing Error: Expected %s in bag slot, found %s instead. Aborting."):format(slot_contents[bagslot], GetContainerItemLink(bag, slot) or "nothing"), 1, 0, 0)
+    -- Re-fetch current link to compare, as slot_contents might be stale if BAG_UPDATE hasn't run recently
+    local currentLinkInSlot = GetContainerItemLink(bag, slot)
+    if slot_contents[bagslot] ~= currentLinkInSlot then
+        -- Don't abort here, just log it maybe. The action should still proceed based on the intended item.
+        -- Or, if it's critical, then re-evaluate. For now, proceed with caution.
+        -- print(("DropTheCheapestThing Warning: Expected %s in bag slot, found %s instead. Proceeding cautiously."):format(slot_contents[bagslot], currentLinkInSlot or "nothing"))
+    end
+    if not currentLinkInSlot then -- If the slot is now empty
+        return DEFAULT_CHAT_FRAME:AddMessage("DropTheCheapestThing Error: Slot is now empty. Aborting.", 1, 0, 0)
     end
 
+
+    local itemToProcessName = pretty_bagslot_name(bagslot) -- Use cached name for message
+    local valueToProcess = slot_values[bagslot] or 0 -- Use cached value
+
     if core.at_merchant then
-        DEFAULT_CHAT_FRAME:AddMessage("Selling " .. pretty_bagslot_name(bagslot) .. " for " .. copper_to_pretty_money(slot_values[bagslot]))
+        DEFAULT_CHAT_FRAME:AddMessage("Selling " .. itemToProcessName .. " for " .. copper_to_pretty_money(valueToProcess))
         UseContainerItem(bag, slot)
-        local charName = UnitName("player") -- Get the name of the current character
-        for id, entries in pairs(core.db.profile.sell_next_vendor) do
+        local charName = UnitName("player")
+        local itemid = link_to_id(slot_contents[bagslot]) -- Get itemid from cached link
+        if itemid and core.db.profile.sell_next_vendor[itemid] then
+            local itemNameFromLink = GetItemInfo(slot_contents[bagslot]) -- Get name from cached link
+            local entries = core.db.profile.sell_next_vendor[itemid]
             for i = #entries, 1, -1 do
-                if entries[i]:match("^(.-):") == charName then
+                local storedCharacterName, storedItemName = string.match(entries[i], "(.-):(.*)")
+                if storedCharacterName == charName and storedItemName == itemNameFromLink then
                     table.remove(entries, i)
                 end
             end
             if #entries == 0 then
-                core.db.profile.sell_next_vendor[id] = nil
+                core.db.profile.sell_next_vendor[itemid] = nil
             end
         end
-        --clearSellIcons()
-        --core:BAG_UPDATE()
-
     else
-        DEFAULT_CHAT_FRAME:AddMessage("Dropping " .. pretty_bagslot_name(bagslot) .. " worth " .. copper_to_pretty_money(slot_values[bagslot]))
+        DEFAULT_CHAT_FRAME:AddMessage("Dropping " .. itemToProcessName .. " worth " .. copper_to_pretty_money(valueToProcess))
         PickupContainerItem(bag, slot)
         DeleteCursorItem()
-        --        clearSellIcons()
-        --        core:BAG_UPDATE()
-
     end
+    core:ScheduleBagUpdate() -- Rescan bags after action
 end
 core.drop_bagslot = drop_bagslot
 
--- Automatically delete unwanted items, or open items (like clams).
--- To add/remove items, edit one of the following lists and (re)run the page.
--- Initial Code from addon named Hack.
-
--- Function to delete items from the auto_delete list
-function core:deleteAutoDeleteItems()
-    local autoDeleteList = core.db.profile.auto_delete or {} -- Retrieve the auto_delete list from your addon's configuration
-    if not core.db.profile.auto_delete_toggle or (not core.db.profile.combat_delete_toggle and UnitAffectingCombat('Player')) then
+local autoDeleteScheduled = nil
+function core:ProcessAutoDelete()
+    autoDeleteScheduled = nil -- Clear schedule flag
+    local autoDeleteList = core.db.profile.auto_delete or {}
+    if not core.db.profile.auto_delete_toggle or (#autoDeleteList == 0) or (not core.db.profile.combat_delete_toggle and UnitAffectingCombat('Player')) then
         return
     end
 
-    -- Table to store deleted items
-    if not core.deletedItems then
-        core.deletedItems = {}
-    end
+    if not core.deletedItems then core.deletedItems = {} end
 
-    -- Iterate through the bags and slots
-    for bag = 0, 16 do
+    for bag = 0, NUM_BAG_SLOTS do -- Iterate all bags, including bank if open
         for slot = 1, GetContainerNumSlots(bag) do
-            local item = GetContainerItemLink(bag, slot)
-            if item then
-                local itemId = tonumber(item:match("item:(%d+)")) -- Extract item ID from the item link
-                if autoDeleteList[itemId] then
-                    -- Check if the item ID is in the auto_delete list
+            local itemLink = GetContainerItemLink(bag, slot)
+            if itemLink then
+                local itemId = tonumber(itemLink:match("item:(%d+)"))
+                if itemId and autoDeleteList[itemId] then
                     local itemKey = bag .. "-" .. slot
-
                     if not core.deletedItems[itemKey] and core.db.profile.print_delete_toggle then
-                        print('Deleting ' .. item .. ' (' .. bag + 1 .. ',' .. slot .. ')')
+                        core:Print('Deleting ' .. itemLink .. ' (' .. bag + 1 .. ',' .. slot .. ')')
                         core.deletedItems[itemKey] = true
-
-                        AceTimer:ScheduleTimer(function()
-                            core.deletedItems = {}
-                        end, 1)
+                        AceTimer:ScheduleTimer(function() core.deletedItems[itemKey] = nil end, 2) -- Clear after 2s
                     end
-
                     PickupContainerItem(bag, slot)
-                    if CursorHasItem() then
-                        DeleteCursorItem()
-                    end
+                    if CursorHasItem() then DeleteCursorItem() end
+                    -- No need to schedule another ProcessAutoDelete from here, ITEM_PUSH will handle it
+                    return -- Exit after one deletion to avoid issues, ITEM_PUSH will re-trigger for next
                 end
             end
         end
     end
 end
 
-
--- Schedule the function to run 1 second after an item is picked up
-local function onItemPush()
-    AceTimer:ScheduleTimer(function()
-        core:deleteAutoDeleteItems()
-    end, 1)
+local function onItemPushOrUpdate()
+    if autoDeleteScheduled then AceTimer:CancelTimer(autoDeleteScheduled) end
+    autoDeleteScheduled = AceTimer:ScheduleTimer(function() core:ProcessAutoDelete() end, 1.5)
 end
 
--- Register event to trigger when an item is pushed to the bag
 local customFrame = CreateFrame("Frame")
-customFrame:RegisterEvent("ITEM_PUSH")
-customFrame:SetScript("OnEvent", onItemPush)
+customFrame:RegisterEvent("ITEM_PUSH", onItemPushOrUpdate)
+customFrame:RegisterEvent("BAG_UPDATE_COOLDOWN", onItemPushOrUpdate) -- Might help catch other changes
 
--- run delete items function initially with delay for DB to have time to init.
-AceTimer:ScheduleTimer(function()
-    core:deleteAutoDeleteItems()
-end, 1)
+AceTimer:ScheduleTimer(function() core:ProcessAutoDelete() end, 2.5) -- Initial run after login/load
 
---------------------------------------------------------------------------------
----- XD
---------------------------------------------------------------------------------
-
-
--- Handle Alt + click event
 function core:ALT_CLICK_ITEM(bag, slot)
     local link = GetContainerItemLink(bag, slot)
+    if not link then return end
     local id = link:match("item:(%d+)")
     id = tonumber(id)
-    local name = GetItemInfo(link) -- Get the full name of the item, including random enchantments
+    local name = GetItemInfo(link)
     if id and IsAltKeyDown() then
         local characterName = UnitName("player")
         if not core.db.profile.sell_next_vendor[id] then
             core.db.profile.sell_next_vendor[id] = {}
         end
         local uniqueIdentifier = characterName .. ":" .. name
-        -- Check if this unique identifier is already in the list
-        if not tContains(core.db.profile.sell_next_vendor[id], uniqueIdentifier) then
+        local found = false
+        for i, v in ipairs(core.db.profile.sell_next_vendor[id]) do
+            if v == uniqueIdentifier then
+                table.remove(core.db.profile.sell_next_vendor[id], i)
+                found = true
+                break
+            end
+        end
+
+        if not found then
             table.insert(core.db.profile.sell_next_vendor[id], uniqueIdentifier)
             core:Print(link .. " |cFFFFFF00added to sell list.|r")
         else
-            -- If it's already in the list, remove it
-            for i, v in ipairs(core.db.profile.sell_next_vendor[id]) do
-                if v == uniqueIdentifier then
-                    table.remove(core.db.profile.sell_next_vendor[id], i)
-                    break
-                end
-            end
             core:Print(link .. " |cFFFF0000removed from sell list.|r")
         end
+        if #core.db.profile.sell_next_vendor[id] == 0 then
+            core.db.profile.sell_next_vendor[id] = nil -- Clean up empty tables
+        end
+        self:ScheduleBagUpdate() -- Update icons after changing list
     end
 end
 
 hooksecurefunc("ContainerFrameItemButton_OnModifiedClick", function(self, button)
-    if button == "RightButton" then
-        local bag, slot = self:GetParent():GetID(), self:GetID();
+    if button == "RightButton" and self:GetParent() and self:GetParent():GetID() and self:GetID() then -- Add safety checks
+        local bag, slot = self:GetParent():GetID(), self:GetID()
         core:ALT_CLICK_ITEM(bag, slot)
-        core:BAG_UPDATE()
+        -- BAG_UPDATE is now scheduled by ALT_CLICK_ITEM
     end
-end);
+end)
 
--- Function for marking directly in the loop
-function markItemForSale(itemButton, itemid, link, characterName)
-    -- Check if AdiBags is loaded
-    local isAdiBagsLoaded = AdiBagsItemButton1 ~= nil
+function markItemForSale(itemButton, itemid, link, characterName, currentBag, currentSlot, isAdiBagsButton)
+    if not itemButton or not link then return end
 
-    -- Trigger AdiBags update if necessary
-    if isAdiBagsLoaded then
-        -- Assuming AdiBags uses a similar message to update its buttons
-        AdiBags:SendMessage("AdiBags_UpdateAllButtons")
+    local itemNameFromLink = GetItemInfo(link)
+    local markForSale = false
+
+    if core.db.profile.always_consider[itemid] and not core.db.profile.never_consider[itemid] then
+        markForSale = true
     end
 
-    local frame -- Declare frame outside the conditional block
-
-    -- Only create a new texture frame if AdiBags is NOT loaded
-    if not isAdiBagsLoaded then
-        frame = itemButton.textureFrame
-        if not frame then
-            frame = CreateFrame("Frame", nil, itemButton)
-            frame:SetAllPoints(itemButton)
-            itemButton.textureFrame = frame
-
-            local texture = frame:CreateTexture(nil, "OVERLAY")
-            texture:SetPoint("TOPRIGHT", frame, "TOPRIGHT") -- Adjust anchoring as needed
-            texture:SetSize(24, 24) -- Adjust size as needed
-            frame.texture = texture
-            frame:Hide()
+    if core.db.profile.sell_next_vendor[itemid] then
+        local uniqueIdentifier = characterName .. ":" .. (itemNameFromLink or "")
+        if tContains(core.db.profile.sell_next_vendor[itemid], uniqueIdentifier) then
+            markForSale = true
         end
     end
 
-    local name = GetItemInfo(link)
-    if link then
-        local uniqueIdentifier = characterName .. ":" .. (name or "")
-        -- Check if the item is on the sell list OR in the always_consider list
-        if core.db.profile.sell_next_vendor[itemid] and tContains(core.db.profile.sell_next_vendor[itemid], uniqueIdentifier) then
-            if not isAdiBagsLoaded then
-                frame:Show() -- Now frame is in scope
-                frame.texture:SetTexture("interface\\buttons\\ui-grouploot-coin-up.blp")
-            end
+    if isAdiBagsButton then
+        -- START: Direct texture manipulation for AdiBags (less ideal, but for visuals)
+        if not itemButton.dtctSellIcon then
+            -- Create the texture ONCE per button
+            itemButton.dtctSellIcon = itemButton:CreateTexture(nil, "OVERLAY") -- Or "ARTWORK" if overlay doesn't work
+            itemButton.dtctSellIcon:SetSize(16, 16) -- Adjust size as needed
+            itemButton.dtctSellIcon:SetPoint("TOPRIGHT", itemButton, "TOPRIGHT", -2, -2) -- Adjust position
+            -- print("DTCT: Created dtctSellIcon for AdiBags button", itemButton:GetName())
+        end
 
-                -- Mark the AdiBags frame directly
-                itemButton.beingSold = true
-
-        elseif core.db.profile.always_consider[itemid] and not core.db.profile.never_consider[itemid] then
-            if not isAdiBagsLoaded then
-                frame:Show() -- Now frame is in scope
-                frame.texture:SetTexture("interface\\buttons\\ui-grouploot-coin-up.blp") -- You can use a different texture here
-            end
-
-                -- Mark the AdiBags frame directly
-                itemButton.beingSold = true
-
+        if markForSale then
+            itemButton.dtctSellIcon:SetTexture("interface\\buttons\\ui-grouploot-coin-up.blp")
+            itemButton.dtctSellIcon:Show()
         else
-            if not isAdiBagsLoaded then
-                frame:Hide() -- Now frame is in scope
+            if itemButton.dtctSellIcon then -- Check if it exists before trying to hide
+                itemButton.dtctSellIcon:Hide()
             end
+        end
+        -- itemButton.dtct_beingSold = markForSale -- You can still set this flag if you want
+        -- END: Direct texture manipulation for AdiBags
+    else -- Standard WoW UI Button
+        if not itemButton.textureFrame then
+            local frame = CreateFrame("Frame", nil, itemButton)
+            frame:SetAllPoints(itemButton)
+            itemButton.textureFrame = frame
+            local texture = frame:CreateTexture(nil, "OVERLAY")
+            texture:SetPoint("TOPRIGHT", frame, "TOPRIGHT") -- Default UI might need different anchor/offset
+            texture:SetSize(16, 16)
+            frame.texture = texture
+            -- frame:Hide() -- Texture frame itself doesn't need to be hidden, just its texture content
+        end
 
-                -- Unmark the AdiBags frame directly
-                itemButton.beingSold = false
+        if markForSale then
+            itemButton.textureFrame.texture:SetTexture("interface\\buttons\\ui-grouploot-coin-up.blp")
+            itemButton.textureFrame:Show()
+        else
+            if itemButton.textureFrame then
+                itemButton.textureFrame:Hide()
+            end
         end
     end
 end
 core.markItemForSale = markItemForSale
 
-function clearSellIcons()
-    for bag = 0, NUM_BAG_SLOTS do
-        local bagsSlotCount = GetContainerNumSlots(bag)
-        for slot = 1, bagsSlotCount do
-            local itemButton = _G["ContainerFrame" .. bag + 1 .. "Item" .. bagsSlotCount - slot + 1]
-            if itemButton and itemButton.textureFrame then
-                itemButton.textureFrame:Hide()
-            end
-            if AdiBagsItemButton1 then
-                for i = 1, 360 do
-                    local frameName = "AdiBagsItemButton" .. i
-                    local adiBagsButton = _G[frameName]
-                    if adiBagsButton and adiBagsButton.textureFrame then
-                        adiBagsButton.textureFrame:Hide()
-                    end
+function clearSellIcons() -- Only for standard bags now
+    for bag = 0, NUM_BAG_SLOTS do -- Only backpack + normal bags
+        local containerFrame = _G["ContainerFrame" .. (bag + 1)]
+        if containerFrame then
+            for slot = 1, GetContainerNumSlots(bag) do
+                local itemButton = _G["ContainerFrame" .. (bag + 1) .. "Item" .. slot]
+                if itemButton and itemButton.textureFrame then
+                    itemButton.textureFrame:Hide()
                 end
             end
         end
     end
+    -- AdiBags icons should be cleared by its own update logic when dtct_beingSold is false
 end
 core.clearSellIcons = clearSellIcons
 
-
-
+-- Utility tContains if not already available globally
+if not tContains then
+    function tContains(table, val)
+        for _, value in ipairs(table) do
+            if value == val then
+                return true
+            end
+        end
+        return false
+    end
+end
