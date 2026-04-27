@@ -362,63 +362,64 @@ core.drop_bagslot = drop_bagslot
 -- Initial Code from addon named Hack.
 
 -- Function to delete items from the auto_delete list
-function core:deleteAutoDeleteItems()
-    local autoDeleteList = core.db.profile.auto_delete or {} -- Retrieve the auto_delete list from your addon's configuration
-    if not core.db.profile.auto_delete_toggle or (not core.db.profile.combat_delete_toggle and UnitAffectingCombat('Player')) then
+local autoDeleteScheduled = nil
+function core:ProcessAutoDelete()
+    autoDeleteScheduled = nil
+
+    local autoDeleteList = core.db.profile.auto_delete or {}
+
+    local count = 0
+    for _ in pairs(autoDeleteList) do count = count + 1 end
+
+    if not core.db.profile.auto_delete_toggle or (count == 0) or (not core.db.profile.combat_delete_toggle and UnitAffectingCombat('Player')) then
         return
     end
 
-    -- Table to store deleted items
     if not core.deletedItems then
         core.deletedItems = {}
     end
 
-    -- Iterate through the bags and slots
-    for bag = 0, 16 do
+    for bag = 0, NUM_BAG_SLOTS do
         for slot = 1, GetContainerNumSlots(bag) do
-            local item = GetContainerItemLink(bag, slot)
-            if item then
-                local itemId = tonumber(item:match("item:(%d+)")) -- Extract item ID from the item link
-                if autoDeleteList[itemId] then
-                    -- Check if the item ID is in the auto_delete list
+            local itemLink = GetContainerItemLink(bag, slot)
+            if itemLink then
+                local itemId = tonumber(itemLink:match("item:(%d+)"))
+                if itemId and autoDeleteList[itemId] then
                     local itemKey = bag .. "-" .. slot
-
                     if not core.deletedItems[itemKey] and core.db.profile.print_delete_toggle then
-                        print('Deleting ' .. item .. ' (' .. bag + 1 .. ',' .. slot .. ')')
+                        core:Print('Deleting ' .. itemLink .. ' (' .. bag + 1 .. ',' .. slot .. ')')
                         core.deletedItems[itemKey] = true
-
                         AceTimer:ScheduleTimer(function()
-                            core.deletedItems = {}
-                        end, 1)
+                            core.deletedItems[itemKey] = nil
+                        end, 2)
                     end
-
                     PickupContainerItem(bag, slot)
                     if CursorHasItem() then
                         DeleteCursorItem()
                     end
+                    return
                 end
             end
         end
     end
 end
 
-
--- Schedule the function to run 1 second after an item is picked up
-local function onItemPush()
-    AceTimer:ScheduleTimer(function()
-        core:deleteAutoDeleteItems()
-    end, 1)
+local function onItemPushOrUpdate()
+    if autoDeleteScheduled then
+        AceTimer:CancelTimer(autoDeleteScheduled)
+    end
+    autoDeleteScheduled = AceTimer:ScheduleTimer(function()
+        core:ProcessAutoDelete()
+    end, 1.5)
 end
 
--- Register event to trigger when an item is pushed to the bag
 local customFrame = CreateFrame("Frame")
-customFrame:RegisterEvent("ITEM_PUSH")
-customFrame:SetScript("OnEvent", onItemPush)
+customFrame:RegisterEvent("ITEM_PUSH", onItemPushOrUpdate)
+customFrame:RegisterEvent("BAG_UPDATE_COOLDOWN", onItemPushOrUpdate)
 
--- run delete items function initially with delay for DB to have time to init.
 AceTimer:ScheduleTimer(function()
-    core:deleteAutoDeleteItems()
-end, 1)
+    core:ProcessAutoDelete()
+end, 2.5)
 
 --------------------------------------------------------------------------------
 ---- XD
@@ -501,8 +502,8 @@ function markItemForSale(itemButton, itemid, link, characterName)
                 frame.texture:SetTexture("interface\\buttons\\ui-grouploot-coin-up.blp")
             end
 
-            -- Mark the AdiBags frame directly
-            itemButton.beingSold = true
+                -- Mark the AdiBags frame directly
+                itemButton.beingSold = true
 
         elseif core.db.profile.always_consider[itemid] and not core.db.profile.never_consider[itemid] then
             if not isAdiBagsLoaded then
@@ -510,16 +511,16 @@ function markItemForSale(itemButton, itemid, link, characterName)
                 frame.texture:SetTexture("interface\\buttons\\ui-grouploot-coin-up.blp") -- You can use a different texture here
             end
 
-            -- Mark the AdiBags frame directly
-            itemButton.beingSold = true
+                -- Mark the AdiBags frame directly
+                itemButton.beingSold = true
 
         else
             if not isAdiBagsLoaded then
                 frame:Hide() -- Now frame is in scope
             end
 
-            -- Unmark the AdiBags frame directly
-            itemButton.beingSold = false
+                -- Unmark the AdiBags frame directly
+                itemButton.beingSold = false
         end
     end
 end
