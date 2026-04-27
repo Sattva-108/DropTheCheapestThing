@@ -2,9 +2,78 @@ local core = LibStub("AceAddon-3.0"):GetAddon("DropTheCheapestThing")
 local module = core:NewModule("Config")
 -- Import AceTimer
 local AceTimer = LibStub("AceTimer-3.0")
+local AceGUI = LibStub("AceGUI-3.0")
+local AceConfigDialog = LibStub("AceConfigDialog-3.0")
 local db
 
 local isCachePerformed = false
+-- Add this near the top of the file with other module variables
+module.searchTerm = nil
+module.lastSearchTerm = nil
+
+-- stash the last‐removed for Undo
+module._lastRemoved = nil
+-- keep track of the pending “clear status” timer
+module._clearStatusTimer = nil
+
+
+-- lazily create & parent the Undo button to your config frame
+local function EnsureUndoButton()
+	local ACD = LibStub("AceConfigDialog-3.0")
+	local guiFrame = ACD.OpenFrames["DropTheCheapestThing"]
+	if not (guiFrame and guiFrame.frame) then return end
+
+	-- only build it once
+	if not module.undoBtn then
+		local parent = guiFrame.frame
+		local btn = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
+		btn:SetSize(60,20)
+		btn:SetPoint("BOTTOMLEFT", parent, "BOTTOMLEFT", 20, -40)
+		btn:SetText("Undo")
+		btn:Hide()
+		-- make sure it's on top of the other children
+		btn:SetFrameLevel(parent:GetFrameLevel()+20)
+
+		btn:SetScript("OnClick", function()
+			local info = module._lastRemoved
+			if not info then return end
+
+			-- re-add
+			core.db.profile[info.list] = core.db.profile[info.list] or {}
+			core.db.profile[info.list][info.itemID] = true
+			module:Refresh()
+			LibStub("AceConfigRegistry-3.0"):NotifyChange("DropTheCheapestThing")
+
+			local frame = LibStub("AceConfigDialog-3.0").OpenFrames["DropTheCheapestThing"]
+			if frame then
+				frame:SetStatusText(("Re-added %s"):format(info.display))
+
+				-- cancel the old clear‐timer silently
+				if module._clearStatusTimer then
+					AceTimer:CancelTimer(module._clearStatusTimer, true)
+				end
+
+				-- schedule a fresh clear 5 seconds after the undo
+				module._clearStatusTimer = AceTimer:ScheduleTimer(function()
+					if frame then frame:SetStatusText("") end
+				end, 5)
+			end
+
+			module._lastRemoved = nil
+			module.undoBtn:Hide()
+		end)
+
+
+
+		module.undoBtn = btn
+	else
+		-- if the frame was re-created, re-parent & re-anchor
+		module.undoBtn:SetParent(guiFrame.frame)
+		module.undoBtn:ClearAllPoints()
+		module.undoBtn:SetPoint("BOTTOMLEFT", guiFrame.frame, "BOTTOMLEFT", 24, 47)
+	end
+end
+
 
 function module:removable_item(itemID, list_name)
 	local list_setting
@@ -19,11 +88,35 @@ function module:removable_item(itemID, list_name)
 
 	local item_name, _, item_rarity, _, _, _, _, _, _, item_icon = GetItemInfo(itemID)
 
+	-- Handle case where item info isn't available yet
+	if not item_name then
+		return {
+			type = "execute",
+			name = "item:"..tostring(itemID),
+			desc = "Item info not available - click to remove from "..list_name,
+			width = "30%",
+			arg = itemID,
+			func = function()
+				core.db.profile[list_setting][itemID] = nil
+				core:_BAG_UPDATE_INTERNAL()
+
+				-- Update the GUI
+				local args = module.options.args[list_setting] and module.options.args[list_setting].args.remove.args
+				if args then
+					args[tostring(itemID)] = nil
+				end
+
+				LibStub("AceConfigRegistry-3.0"):NotifyChange("DropTheCheapestThing")
+				module:Refresh()
+			end,
+		}
+	end
+
 	-- Get the color for the item's rarity
 	local rarityColor = select(4, GetItemQualityColor(item_rarity))
 
 	-- If item_name exists, wrap it in the color code. Otherwise, use a default representation.
-	local coloredItemName = item_name and rarityColor .. item_name .. "|r" or 'itemid:' .. tostring(itemID)
+	local coloredItemName = item_name and rarityColor..item_name.."|r" or 'itemid:'..tostring(itemID)
 
 	--print("Function called with list_name: " .. list_name)  -- New debug statement
 	--print("List setting: " .. list_setting)
@@ -31,31 +124,66 @@ function module:removable_item(itemID, list_name)
 
 
 	return {
-		type = "execute",
-		name = coloredItemName,
-		desc = not item_name and "Item isn't cached" or "Click to remove from the " .. list_name .. " consider list",
-		image = item_icon,
-		width = "30%",
-		arg = itemID,
-		func = function()
-			-- Ensure that the necessary keys exist in the profile table
-			core.db.profile[list_setting] = core.db.profile[list_setting] or {}
-			core.db.profile[list_setting][itemID] = nil
+	type = "execute",
+	name = coloredItemName,
+	desc = "Click to remove from the "..list_name.." list",
+	image = item_icon,
+	width = "30%",
+	arg = itemID,
+	func = function()
+		-- 1) remove from the saved list
+		core.db.profile[list_setting] = core.db.profile[list_setting] or {}
+		core.db.profile[list_setting][itemID] = nil
 
-			core:BAG_UPDATE()
+		-- 2) update bags/UI
+		core:_BAG_UPDATE_INTERNAL()
 
-			-- Check if the args table and the corresponding keys exist
-			local args = module.options.args[list_setting] and module.options.args[list_setting].args.remove.args
-			if args then
-				args[tostring(itemID)] = nil
+		-- 3) strip it out of the options args table so it disappears immediately
+		local args = module.options.args[list_setting]
+				and module.options.args[list_setting].args.remove.args
+		if args then
+			args[tostring(itemID)] = nil
+		end
+
+		-- 4) rebuild and notify AceConfig
+		LibStub("AceConfigRegistry-3.0"):NotifyChange("DropTheCheapestThing")
+		module:Refresh()
+
+		-- 5) show a “Removed X” status message in the config frame
+		local _, itemLink = GetItemInfo(itemID)
+		-- fall back to your coloured name if the link isn’t cached yet:
+		local display = itemLink or coloredItemName
+
+		-- 5) **store** for undo
+		module._lastRemoved = {
+			itemID  = itemID,
+			list    = list_setting,
+			display = display,
+		}
+
+		-- 6) ensure our Undo button exists & show it
+		EnsureUndoButton()
+		if module.undoBtn then
+			module.undoBtn:Show()
+			module.undoBtn:Raise()
+		end
+
+		local frame = AceConfigDialog.OpenFrames["DropTheCheapestThing"]
+		if frame then
+			frame:SetStatusText(("Removed %s"):format(display))
+
+			if module._clearStatusTimer then
+				AceTimer:CancelTimer(module._clearStatusTimer, true)
 			end
+			module._clearStatusTimer = AceTimer:ScheduleTimer(function()
+				if frame then frame:SetStatusText("") end
+				if module.undoBtn then module.undoBtn:Hide() end
+			end, 5)
+		end
 
-			LibStub("AceConfigRegistry-3.0"):NotifyChange("DropTheCheapestThing")
 
-			-- Refresh the GUI
-			module:Refresh()
 
-		end,
+	end,
 	}
 end
 
@@ -112,11 +240,13 @@ local function item_list_group(name, order, description, db_table)
 		order = order,
 		args = {},
 	}
+
 	group.args.about = {
 		type = "description",
 		name = description,
 		order = 0,
 	}
+
 	group.args.add = {
 		type = "input",
 		name = "Add",
@@ -126,34 +256,93 @@ local function item_list_group(name, order, description, db_table)
 			local itemid = core.link_to_id(v) or tonumber(v)
 			db_table[itemid] = true
 
-			-- Get and create a proper category for a new item, then add it
-			local itemName, _, _, _, _, itemType = GetItemInfo(itemid)
+			local itemName, itemLink, itemRarity, _, _, itemType = GetItemInfo(itemid)
 			if itemName and itemType then
 				local category = module:CreateCategory(itemType, group.args.remove)
 				category.args[tostring(itemid)] = module:removable_item(itemid, name)
 			end
+			-- itemLink will be something like "|cff9d9d9d[Worn Shortsword]|r"
+			local display = itemLink or ( select(4,GetItemQualityColor(itemRarity)) .. (itemName or "") .. "|r" )
 
-			core:BAG_UPDATE()
-			-- Schedule a timer to call ClearFocus() after a delay
-			AceTimer:ScheduleTimer(function() _G["AceGUI-3.0EditBox1"]:ClearFocus() end, 0.01)
+			local frame = AceConfigDialog.OpenFrames["DropTheCheapestThing"]
+			if frame then
+				-- cancel any old clear so it won’t wipe this “Added” text prematurely
+				if module._clearStatusTimer then
+					AceTimer:CancelTimer(module._clearStatusTimer, true)
+				end
+
+				frame:SetStatusText(("Added %s"):format(display))
+
+				-- schedule one fresh clear 5s from now and remember its handle
+				module._clearStatusTimer = AceTimer:ScheduleTimer(function()
+					if frame then frame:SetStatusText("") end
+					-- also hide the Undo button if it’s still up
+					if module.undoBtn then module.undoBtn:Hide() end
+					module._clearStatusTimer = nil
+				end, 5)
+			end
+
+
+			core:_BAG_UPDATE_INTERNAL()
+			AceTimer:ScheduleTimer(function() _G["AceGUI-3.0EditBox2"]:ClearFocus() end, 0.01)
 		end,
 		validate = function(info, v)
-			if v:match("^%d+$") or v:match("item:%d+") then
-				return true
-			end
+			if v:match("^%d+$") or v:match("item:%d+") then return true end
 		end,
-		order = 10,
+		dialogControl = "DropCheapAddBox",
+		order = 5,
+		width = "quarter",
 	}
+
+	group.args.spacer_after_add = {
+		type = "description",
+		name = "",
+		order = 5.5,
+		width = "full",
+	}
+
+
+	if name == "Always Consider" then
+		group.args.search = {
+			type = "input",
+			name = "Search",
+			desc = "Filter items shown below.",
+			get = function(info) return module.searchTerm or "" end,
+			set = function(info, v)
+				module.searchTerm = v ~= "" and v:lower() or nil
+				module.lastSearchTerm = module.searchTerm
+				AceTimer:ScheduleTimer(function()
+					module:RebuildFilteredRemoveGroup()
+				end, 0.01)
+			end,
+			dialogControl = "DropCheapSearchBox",
+			order = 6,
+			width = "quarter",
+		}
+
+		group.args.clear_search = {
+			type = "execute",
+			name = "Clear",
+			desc = "Reset the search filter.",
+			func = function()
+				module.searchTerm = nil
+				module.lastSearchTerm = nil
+				module.activeTab = "always"
+				module:Refresh()
+				local ACD = LibStub("AceConfigDialog-3.0")
+				ACD:SelectGroup("DropTheCheapestThing", "always")
+				ACD:Open("DropTheCheapestThing")
+			end,
+			order = 7,
+			width = "half",
+		}
+	end
+
 	group.args.remove = {
 		type = "group",
 		inline = true,
 		name = "Remove",
-		order = 20,
-		func = function(info)
-			db_table[info.arg] = nil
-			group.args.remove.args[info[#info]] = nil
-			core:BAG_UPDATE()
-		end,
+		order = 10,
 		args = {
 			about = {
 				type = "description",
@@ -200,16 +389,34 @@ local function item_list_group(name, order, description, db_table)
 
 	for itemID in pairs(db_table) do
 		cacheItemInfo(itemID)
-		--print("ItemID:", itemID)
 		local itemName, _, _, _, _, itemType = GetItemInfo(itemID)
+
 		if itemName and itemType then
-			--print("ItemName:", itemName, "ItemType:", itemType)
-			local category = module:CreateCategory(itemType, group.args.remove)
-			category.args[tostring(itemID)] = module:removable_item(itemID, name)
+			local showItem = true
+
+			if showItem then
+				local category = module:CreateCategory(itemType, group.args.remove)
+				category.args[tostring(itemID)] = module:removable_item(itemID, name)
+			end
 		else
-			--print("Item info missing for:", itemID)
+			-- Uncached items
+			local category = module:CreateCategory("Uncached Items", group.args.remove)
+			category.args[tostring(itemID)] = {
+				type = "execute",
+				name = "item:"..tostring(itemID),
+				desc = "Item info not available - click to remove",
+				width = "30%",
+				arg = itemID,
+				func = function()
+					core.db.profile[list_setting][itemID] = nil
+					core:_BAG_UPDATE_INTERNAL()
+					LibStub("AceConfigRegistry-3.0"):NotifyChange("DropTheCheapestThing")
+					module:Refresh()
+				end,
+			}
 		end
 	end
+
 	return group
 end
 
@@ -278,7 +485,7 @@ function module:OnInitialize()
 		type = "group",
 		name = "DropTheCheapestThing",
 		get = function(info) return db.profile[info[#info]] end,
-		set = function(info, v) db.profile[info[#info]] = v; core:BAG_UPDATE() end,
+		set = function(info, v) db.profile[info[#info]] = v; core:_BAG_UPDATE_INTERNAL() end,
 		args = {
 			general = {
 				type = "group",
@@ -342,7 +549,7 @@ function module:OnInitialize()
 						desc = "Select one of the available profiles",
 						values = getProfileList,
 						get = function() return db:GetCurrentProfile() end,
-						set = function(_, profileKey) db:SetProfile(profileKey); module:Refresh() core:BAG_UPDATE() print("Switched to profile:", profileKey) end,
+						set = function(_, profileKey) db:SetProfile(profileKey); module:Refresh() core:_BAG_UPDATE_INTERNAL() print("Switched to profile:", profileKey) end,
 						order = 10,
 					},
 					blank1 = {
@@ -385,11 +592,52 @@ function module:OnInitialize()
 	}
 	self.options = options
 
+	AceGUI:RegisterWidgetType("DropCheapSearchBox",
+			function()
+			-- create a normal EditBox…
+				local widget = AceGUI:Create("EditBox")
+			widget:SetLabel("Search")
+
+			-- but *immediately* hook its OnTextChanged
+				widget.editbox:HookScript("OnTextChanged", function()
+					local txt = widget.editbox:GetText():lower()
+					module.searchTerm = (txt ~= "") and txt or nil
+					module.searchBox  = widget
+                	module:RebuildFilteredRemoveGroup("always")
+				end)
+
+				return widget
+			end,
+			1)
+
+	-- a bespoke EditBox just for your "Add" field
+	AceGUI:RegisterWidgetType("DropCheapAddBox",
+			function()
+				local widget = AceGUI:Create("EditBox")
+				widget:SetLabel("Add")
+
+				-- preserve the original drag handler...
+				local orig = widget.editbox:GetScript("OnReceiveDrag")
+				-- then hook *after* it runs, only on *this* widget:
+				widget.editbox:HookScript("OnReceiveDrag", function(self, ...)
+					-- call the original so item-links still get dropped in correctly
+					orig(self, ...)
+					-- then clear focus a moment later
+					AceTimer:ScheduleTimer(function()
+						widget:ClearFocus()
+					end, 0.01)
+				end)
+
+				return widget
+			end,
+			1
+	)
+
+
+
 	LibStub("AceConfigRegistry-3.0"):RegisterOptionsTable("DropTheCheapestThing", options)
 	LibStub("AceConfigDialog-3.0"):AddToBlizOptions("DropTheCheapestThing", "DropTheCheapestThing")
 end
-
-local AceConfigDialog = LibStub("AceConfigDialog-3.0")
 
 local function SetDialogPosition(dialog)
 	--local frame = dialog.frame
@@ -404,35 +652,15 @@ local function SetDialogPosition(dialog)
 end
 
 function module:ShowConfig()
-	--AceConfigDialog:SetDefaultSize("DropTheCheapestThing", 800, 200) -- Specify custom width and height of GUI here
-	AceConfigDialog:SelectGroup("DropTheCheapestThing", "always") -- Open Always Consider tab
-	AceConfigDialog:Open("DropTheCheapestThing")
+	module.activeTab = "always"
+	local ACD = LibStub("AceConfigDialog-3.0")
+	ACD:SelectGroup("DropTheCheapestThing", "always")
+	ACD:Open("DropTheCheapestThing")
+	EnsureUndoButton()
 
-	--local adiBagsContainer = _G["AdiBagsContainer1"]
-	--if IsAddOnLoaded("AdiBags") and adiBagsContainer and not adiBagsContainer:IsShown() then
-	--	adiBagsContainer:Show() -- show AdiBags bag
-	--end
-
-	local dialog = AceConfigDialog.OpenFrames["DropTheCheapestThing"]
-
-	if dialog then
-		-- Apply the custom position only once, after opening the frame
-		hooksecurefunc(dialog.frame, "Show", function()
-			-- Only apply SetDialogPosition to frames belonging to your addon
-			if dialog == AceConfigDialog.OpenFrames["DropTheCheapestThing"] then
-				if not module:IsConfigShown() then
-					--SetDialogPosition(dialog)
-
-				end
-			end
-		end)
-	end
-	if isCachePerformed then
-		AceTimer:ScheduleTimer(function() module:Refresh() AceConfigDialog:Open("DropTheCheapestThing") end, 1)
-	end
-	-- FIXME: do we really need to call it all the time?
 	module:Refresh()
 end
+
 
 function module:HideConfig()
 	local dialog = AceConfigDialog.OpenFrames["DropTheCheapestThing"]
@@ -484,7 +712,7 @@ function module:AddItemToAlwaysConsider(itemID)
 	end
 
 	core.db.profile.always_consider[itemID] = true
-	core:BAG_UPDATE()
+	core:_BAG_UPDATE_INTERNAL()
 
 	LibStub("AceConfigRegistry-3.0"):NotifyChange("DropTheCheapestThing")
 end
@@ -503,7 +731,7 @@ function module:AddItemToNeverConsider(itemID)
 	end
 
 	core.db.profile.never_consider[itemID] = true
-	core:BAG_UPDATE()
+	core:_BAG_UPDATE_INTERNAL()
 
 	LibStub("AceConfigRegistry-3.0"):NotifyChange("DropTheCheapestThing")
 end
@@ -522,7 +750,7 @@ function module:AutoDeleteItem(itemID)
 	end
 
 	core.db.profile.auto_delete[itemID] = true
-	core:BAG_UPDATE()
+	core:_BAG_UPDATE_INTERNAL()
 
 	LibStub("AceConfigRegistry-3.0"):NotifyChange("DropTheCheapestThing")
 end
@@ -549,3 +777,58 @@ SLASH_DROPTHECHEAPESTTHING2 = "/dtct"
 function SlashCmdList.DROPTHECHEAPESTTHING()
 	module:ShowConfig()
 end
+
+function module:RebuildFilteredRemoveGroup()
+	-- guard: if there’s no searchTerm *and* the search box isn’t focused, bail
+	if (not module.searchTerm or module.searchTerm == "")
+			and (not module.searchBox
+			or not module.searchBox.editbox:HasFocus())
+	then
+		return
+	end
+
+	local dialog = LibStub("AceConfigDialog-3.0").OpenFrames["DropTheCheapestThing"]
+	if not dialog then return end
+
+	-- find the “Remove” InlineGroup under Always Consider
+	local removeGroup
+	for _, frame in ipairs(dialog.children or {}) do
+		if frame.type=="TreeGroup" or frame.type=="TabGroup" then
+			for _, sf in ipairs(frame.children or {}) do
+				if sf.type=="ScrollFrame" then
+					for _, ig in ipairs(sf.children or {}) do
+						if ig.type=="InlineGroup"
+								and ig.titletext:GetText()=="Remove"
+						then
+							removeGroup = ig
+							break
+						end
+					end
+				end
+			end
+		end
+	end
+	if not removeGroup then return end
+
+	-- clear & rebuild, always using the AlwaysConsider table
+	removeGroup:ReleaseChildren()
+	local term = module.searchTerm
+	for itemID in pairs(core.db.profile.always_consider) do
+		local name = select(1, GetItemInfo(itemID))
+		if name then
+			if not term
+					or name:lower():find(term)
+					or tostring(itemID):find(term)
+			then
+				local entry  = module:removable_item(itemID, "Always Consider")
+				local widget = LibStub("AceGUI-3.0"):Create("Icon")
+				widget:SetImage(entry.image or "Interface\\Icons\\INV_Misc_QuestionMark")
+				widget:SetLabel(entry.name)
+				widget:SetCallback("OnClick", function() entry.func() end)
+				removeGroup:AddChild(widget)
+			end
+		end
+	end
+	removeGroup:DoLayout()
+end
+
